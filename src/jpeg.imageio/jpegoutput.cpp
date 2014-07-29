@@ -250,7 +250,10 @@ JpgOutput::open (const std::string &name, const ImageSpec &newspec,
 
     m_spec.set_format (TypeDesc::UINT8);  // JPG is only 8 bit
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 2823595ee76445a60eefe2b62a8aa648b8873615
     // Write ICC profile, if we have anything
     const ImageIOParameter* icc_profile_parameter = m_spec.find_attribute(ICC_PROFILE_ATTR);
     if (icc_profile_parameter != NULL) {
@@ -279,7 +282,10 @@ JpgOutput::open (const std::string &name, const ImageSpec &newspec,
         }
     }
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 2823595ee76445a60eefe2b62a8aa648b8873615
     m_dither = m_spec.get_int_attribute ("oiio:dither", 0);
 
     // If user asked for tiles -- which JPEG doesn't support, emulate it by

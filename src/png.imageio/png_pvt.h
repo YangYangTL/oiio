@@ -44,6 +44,8 @@
 #include "OpenImageIO/sysutil.h"
 
 
+#define OIIO_LIBPNG_VERSION (PNG_LIBPNG_VER_MAJOR*10000 + PNG_LIBPNG_VER_MINOR*100 + PNG_LIBPNG_VER_RELEASE)
+
 
 /*
 This code has been extracted from the PNG plugin so as to provide access to PNG
@@ -167,13 +169,17 @@ read_info (png_structp& sp, png_infop& ip, int& bit_depth, int& color_type,
 
 
     if (png_get_valid(sp, ip, PNG_INFO_iCCP)) {
-
         png_charp profile_name = NULL;
+#if OIIO_LIBPNG_VERSION > 10500   /* PNG function signatures changed */
         png_bytep profile_data = NULL;
+#else
+        png_charp profile_data = NULL;
+#endif
         png_uint_32 profile_length = 0;
         int compression_type;
+        png_get_iCCP (sp, ip, &profile_name, &compression_type,
+                      &profile_data, &profile_length);
 
-        png_get_iCCP (sp, ip, &profile_name, &compression_type, &profile_data, &profile_length);
         if (profile_length && profile_data)
             spec.attribute (ICC_PROFILE_ATTR, TypeDesc(TypeDesc::UINT8, profile_length), profile_data);
     }
@@ -477,11 +483,16 @@ write_info (png_structp& sp, png_infop& ip, int& color_type,
     // Write ICC profile, if we have anything
     const ImageIOParameter* icc_profile_parameter = spec.find_attribute(ICC_PROFILE_ATTR);
     if (icc_profile_parameter != NULL) {
-        unsigned char *icc_profile = (unsigned char*)icc_profile_parameter->data();
         unsigned int length = icc_profile_parameter->type().size();
+#if OIIO_LIBPNG_VERSION > 10500 /* PNG function signatures changed */
+        unsigned char *icc_profile = (unsigned char*)icc_profile_parameter->data();
         if (icc_profile && length)
-            png_set_iCCP (sp, ip, "Embedded Profile", 0,
-                          (png_const_bytep)icc_profile, length);
+            png_set_iCCP (sp, ip, "Embedded Profile", 0, icc_profile, length);
+#else
+        char *icc_profile = (char*)icc_profile_parameter->data();
+        if (icc_profile && length)
+            png_set_iCCP (sp, ip, (png_charp)"Embedded Profile", 0, icc_profile, length);
+#endif
     }
 
 
