@@ -171,8 +171,6 @@ TIFFOutput::supports (const std::string &feature) const
 #define ICC_PROFILE_ATTR "ICCProfile"
 
 
-
-
 bool
 TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
                   OpenMode mode)
@@ -325,7 +323,6 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
         m_spec.attribute ("DateTime", date);
     }
 
-
     // Write ICC profile, if we have anything
     const ImageIOParameter* icc_profile_parameter = m_spec.find_attribute(ICC_PROFILE_ATTR);
     if (icc_profile_parameter != NULL) {
@@ -334,7 +331,6 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
         if (icc_profile && length)
             TIFFSetField (m_tif, TIFFTAG_ICCPROFILE, length, icc_profile);
     }
-
 
     if (Strutil::iequals (m_spec.get_string_attribute ("oiio:ColorSpace"), "sRGB"))
         m_spec.attribute ("Exif:ColorSpace", 1);

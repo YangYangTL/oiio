@@ -134,7 +134,6 @@ JpgInput::valid_file (const std::string &filename) const
 
 
 bool
-
 JpgInput::open (const std::string &name, ImageSpec &newspec,
                 const ImageSpec &config)
 {
@@ -143,6 +142,7 @@ JpgInput::open (const std::string &name, ImageSpec &newspec,
     m_raw = p && *(int *)p->data();
     return open (name, newspec);
 }
+
 
 
 bool

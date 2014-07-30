@@ -47,7 +47,6 @@ extern "C" {
 OIIO_PLUGIN_NAMESPACE_BEGIN
 
 
-
 #define MAX_DATA_BYTES_IN_MARKER 65519L
 #define ICC_HEADER_SIZE 14
 #define ICC_PROFILE_ATTR "ICCProfile"
@@ -67,7 +66,6 @@ class JpgInput : public ImageInput {
     virtual bool close ();
     const std::string &filename () const { return m_filename; }
     void * coeffs () const { return m_coeffs; }
-
     struct my_error_mgr {
         struct jpeg_error_mgr pub;    /* "public" fields */
         jmp_buf setjmp_buffer;        /* for return to caller */

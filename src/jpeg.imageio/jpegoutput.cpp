@@ -250,7 +250,6 @@ JpgOutput::open (const std::string &name, const ImageSpec &newspec,
 
     m_spec.set_format (TypeDesc::UINT8);  // JPG is only 8 bit
 
-
     // Write ICC profile, if we have anything
     const ImageIOParameter* icc_profile_parameter = m_spec.find_attribute(ICC_PROFILE_ATTR);
     if (icc_profile_parameter != NULL) {
@@ -278,7 +277,6 @@ JpgOutput::open (const std::string &name, const ImageSpec &newspec,
             }
         }
     }
-
 
     m_dither = m_spec.get_int_attribute ("oiio:dither", 0);
 

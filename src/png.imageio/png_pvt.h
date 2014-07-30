@@ -62,7 +62,6 @@ http://lists.openimageio.org/pipermail/oiio-dev-openimageio.org/2009-April/00065
 
 OIIO_PLUGIN_NAMESPACE_BEGIN
 
-
 #define ICC_PROFILE_ATTR "ICCProfile"
 
 
@@ -167,7 +166,6 @@ read_info (png_structp& sp, png_infop& ip, int& bit_depth, int& color_type,
         }
     }
 
-
     if (png_get_valid(sp, ip, PNG_INFO_iCCP)) {
         png_charp profile_name = NULL;
 #if OIIO_LIBPNG_VERSION > 10500   /* PNG function signatures changed */
@@ -179,7 +177,6 @@ read_info (png_structp& sp, png_infop& ip, int& bit_depth, int& color_type,
         int compression_type;
         png_get_iCCP (sp, ip, &profile_name, &compression_type,
                       &profile_data, &profile_length);
-
         if (profile_length && profile_data)
             spec.attribute (ICC_PROFILE_ATTR, TypeDesc(TypeDesc::UINT8, profile_length), profile_data);
     }
@@ -479,7 +476,6 @@ write_info (png_structp& sp, png_infop& ip, int& color_type,
         png_set_sRGB_gAMA_and_cHRM (sp, ip, PNG_sRGB_INTENT_ABSOLUTE);
     }
 
-
     // Write ICC profile, if we have anything
     const ImageIOParameter* icc_profile_parameter = spec.find_attribute(ICC_PROFILE_ATTR);
     if (icc_profile_parameter != NULL) {
@@ -494,7 +490,6 @@ write_info (png_structp& sp, png_infop& ip, int& color_type,
             png_set_iCCP (sp, ip, (png_charp)"Embedded Profile", 0, icc_profile, length);
 #endif
     }
-
 
     if (false && ! spec.find_attribute("DateTime")) {
         time_t now;

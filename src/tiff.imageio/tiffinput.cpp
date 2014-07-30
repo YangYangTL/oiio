@@ -541,7 +541,6 @@ static const TIFF_tag_info exif_tag_table[] = {
 #define ICC_PROFILE_ATTR "ICCProfile"
 
 
-
 void
 TIFFInput::readspec (bool read_meta)
 {
@@ -814,11 +813,9 @@ TIFFInput::readspec (bool read_meta)
     /// read color profile
     unsigned int icc_datasize = 0;
     unsigned char *icc_buf = NULL;
-
     TIFFGetField (m_tif, TIFFTAG_ICCPROFILE, &icc_datasize, &icc_buf);
     if (icc_datasize && icc_buf)
         m_spec.attribute (ICC_PROFILE_ATTR, TypeDesc(TypeDesc::UINT8, icc_datasize), icc_buf);
-
 
     // Search for an EXIF IFD in the TIFF file, and if found, rummage 
     // around for Exif fields.
