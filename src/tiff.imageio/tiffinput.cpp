@@ -541,9 +541,6 @@ static const TIFF_tag_info exif_tag_table[] = {
 #define ICC_PROFILE_ATTR "ICCProfile"
 
 
-#define ICC_PROFILE_ATTR "ICCProfile"
-
-
 
 void
 TIFFInput::readspec (bool read_meta)

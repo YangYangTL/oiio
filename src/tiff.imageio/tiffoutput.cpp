@@ -171,8 +171,6 @@ TIFFOutput::supports (const std::string &feature) const
 #define ICC_PROFILE_ATTR "ICCProfile"
 
 
-#define ICC_PROFILE_ATTR "ICCProfile"
-
 
 
 bool
