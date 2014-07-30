@@ -245,11 +245,6 @@ JpgInput::open (const std::string &name, ImageSpec &newspec)
 
 
 
-
-
-
-
-
 bool
 JpgInput::read_icc_profile (j_decompress_ptr cinfo, ImageSpec& spec)
 {
