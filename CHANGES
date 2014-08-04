@@ -3,13 +3,27 @@ Changes:
 Release 1.5 (development in progress) -- compared to 1.4.x
 ----------------------------------------------
 Major new features and improvements:
+* New oiiotool functionality/commands: --orientcw, --orientccw, --orient180,
+  --rotate90, --rotate180, --rotate270, --reorient, --autoorient.
 
 Public API changes:
 * New filters available to direct users of filter.{h,cpp} and for
   ImageBufAlgo, oiiotoo, and maketx: "cubic", "keys", "simon", "rifman".
   (1.5.0/1.4.9) (#874)
+* Global attribute "read_chunk" can set the default number of scanlines
+  read at a time internally by read_image() calls. #925
 
 Fixes, minor enhancements, and performance improvements:
+* ImageBufAlgo:
+   * flip(), flop(), flipflop() have been rewritten to work more
+     sensibly for cropped images. In particular, the transformation now
+     happens with respect to the display (full) window, rather than
+     simply flipping or flopping within the data window. (1.5.2)
+   * rotate90(), rotate180(), rotate270() rotate the image in 90 degree
+     axially-aligned increments. (1.5.2)
+   * reorient() will perform whatever series of rotations or flips are
+     necessary to move the pixels to match the Orientation metadata that
+     describes the desired display orientation. (1.5.2)
 * oiiotool:
    * oiiotool --nosoftwareattrib suppresses the altering of Software and
      ImageHistory fields upon output. (1.5.1)
@@ -29,6 +43,23 @@ Fixes, minor enhancements, and performance improvements:
      ImageHistory metadata (makes it less pointlessly verbose). (1.5.1)
    * Now get helpful error messages if input images are corrupt or
      incomplete. (1.5.1)
+   * oiiotool --flip, --flop, --flipflop, and --transpose now have more
+     sensible behavior for cropped images. (1.5.2)
+   * oiiotool --orientcw, --orientccw, and --orient180 are the new names
+     for --rotcw, --rotccw, --rot180. The old names were confusing, and now
+     it is more clear that these merely adust the Orientation metadata that
+     suggests viewing orientation, rather than actually rotating the image
+     data. (1.5.2)
+   * oiiotool --rotate90, --rotate180, --rotate270 rotate the image in
+     90 degree axially-aligned increments. (1.5.2)
+   * oiiotool --reorient will perform whatever series of rotations or
+     flips are necessary to move the pixels to match the Orientation
+     metadata that describes the desired display orientation. (1.5.2)
+   * oiiotool --autoorient will automatically do the equivalent of
+     --reorient on every image as it is read in, if it has a nonstandard
+     orientation. (This is generally a good idea to use if you are using
+     oiiotool to combine images that may have different orientations.)
+     (1.5.2)
 * maketx:
    * Fix case typo for LatLong env map creation when in 'prman' mode. #877.
      (1.5.1/1.4.10)
@@ -50,6 +81,8 @@ Fixes, minor enhancements, and performance improvements:
 * JPEG:
    * Fix broken recognition of .jfi extension. (#876)
    * Read and write ICC profiles as attribute "ICCProfile". (#911)
+   * Fix seek_subimage for JPEG input -- did not properly return the
+    spec. (1.5.2/1.4.12)
 * PNG:
    * Read and write ICC profiles as attribute "ICCProfile". (#911)
 * TIFF:
@@ -101,6 +134,12 @@ Build/test system improvements:
   in MSVC 2013). #912 (1.4.12/1.5.2)
 * Fix for Linux + Boost >= 1.55 combination: need to link with -lrt.
   #914 (1.4.12/1.5.2)
+* Fix Ptex + static linkage. (1.4.12/1.5.2)
+* Rudimentary support for C++11: building with USE_CPP11=1 tries to set
+  compiler flags (for gcc and clang, anyway) to use C++11 mode, and also
+  building with USE_LIBCPLUSPLUS=1 tries to link with libc++ if you are
+  using clang. (1.5.2)
+* Fixes for Boost Filesystem 1.46-1.49. (1.5.2/1.4.12)
 
 Developer goodies / internals:
 * New Strutil string comparison functions: starts_with, ends_with.
@@ -117,8 +156,8 @@ Developer goodies / internals:
 
 
 
-Release 1.4.12 (? Jul 2014 -- compared to 1.4.11)
--------------------------------------------------
+Release 1.4.12 (31 Jul 2014 -- compared to 1.4.11)
+--------------------------------------------------
 * ImageCache fix for when files are not found, then subsequently the
   searchpath is changed. #913 (1.4.12/1.5.2)
 * Fixes to fmath.h to work with MSVC 2013 (some long-omitted math ops that
@@ -126,6 +165,8 @@ Release 1.4.12 (? Jul 2014 -- compared to 1.4.11)
   in MSVC 2013). #912 (1.4.12/1.5.2)
 * Fix for Linux + Boost >= 1.55 combination: need to link with -lrt.
   #914 (1.4.12/1.5.2)
+* Fix Ptex + static linkage. (1.4.12/1.5.2)
+
 
 Release 1.4.11 (9 Jul 2014 -- compared to 1.4.10)
 -------------------------------------------------
