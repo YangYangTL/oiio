@@ -540,6 +540,7 @@ output_file (int argc, const char *argv[])
         return 0;
     }
     bool supports_displaywindow = out->supports ("displaywindow");
+    bool supports_negativeorigin = out->supports ("negativeorigin");
     bool supports_tiles = out->supports ("tiles") || ot.output_force_tiles;
     ot.read ();
     ImageRecRef saveimg = ot.curimg;
@@ -577,6 +578,25 @@ output_file (int argc, const char *argv[])
         const char *argv[] = { "croptofull" };
         int action_croptofull (int argc, const char *argv[]); // forward decl
         action_croptofull (1, argv);
+        ir = ot.curimg;
+    }
+
+    // Automatically crop out the negative areas if outputting to a format
+    // that doesn't support negative origins.
+    if (! supports_negativeorigin && ot.output_autocrop &&
+        (ir->spec()->x < 0 || ir->spec()->y < 0 || ir->spec()->z < 0)) {
+        ROI roi = get_roi (*ir->spec(0,0));
+        roi.xbegin = std::max (0, roi.xbegin);
+        roi.ybegin = std::max (0, roi.ybegin);
+        roi.zbegin = std::max (0, roi.zbegin);
+        std::string crop = (ir->spec(0,0)->depth == 1)
+            ? format_resolution (roi.width(), roi.height(),
+                                 roi.xbegin, roi.ybegin)
+            : format_resolution (roi.width(), roi.height(), roi.depth(),
+                                 roi.xbegin, roi.ybegin, roi.zbegin);
+        const char *argv[] = { "crop", crop.c_str() };
+        int action_crop (int argc, const char *argv[]); // forward decl
+        action_crop (2, argv);
         ir = ot.curimg;
     }
 
@@ -1109,8 +1129,8 @@ action_colorconvert (int argc, const char *argv[])
     ot.push (new ImageRec (*A, ot.allsubimages ? -1 : 0,
                            ot.allsubimages ? -1 : 0, true, false));
 
-    for (int s = 0, send = A->subimages();  s < send;  ++s) {
-        for (int m = 0, mend = A->miplevels(s);  m < mend;  ++m) {
+    for (int s = 0, send = ot.curimg->subimages();  s < send;  ++s) {
+        for (int m = 0, mend = ot.curimg->miplevels(s);  m < mend;  ++m) {
             bool ok = ImageBufAlgo::colorconvert ((*ot.curimg)(s,m), (*A)(s,m),
                                  fromspace.c_str(), tospace.c_str(), false);
             if (! ok)
@@ -1173,8 +1193,8 @@ action_ociolook (int argc, const char *argv[])
     if (tospace == "current" || tospace == "")
         tospace = A->spec(0,0)->get_string_attribute ("oiio:Colorspace", "Linear");
 
-    for (int s = 0, send = A->subimages();  s < send;  ++s) {
-        for (int m = 0, mend = A->miplevels(s);  m < mend;  ++m) {
+    for (int s = 0, send = ot.curimg->subimages();  s < send;  ++s) {
+        for (int m = 0, mend = ot.curimg->miplevels(s);  m < mend;  ++m) {
             bool ok = ImageBufAlgo::ociolook (
                 (*ot.curimg)(s,m), (*A)(s,m),
                 lookname.c_str(), fromspace.c_str(), tospace.c_str(),
@@ -1227,8 +1247,8 @@ action_ociodisplay (int argc, const char *argv[])
     if (fromspace == "current" || fromspace == "")
         fromspace = A->spec(0,0)->get_string_attribute ("oiio:Colorspace", "Linear");
 
-    for (int s = 0, send = A->subimages();  s < send;  ++s) {
-        for (int m = 0, mend = A->miplevels(s);  m < mend;  ++m) {
+    for (int s = 0, send = ot.curimg->subimages();  s < send;  ++s) {
+        for (int m = 0, mend = ot.curimg->miplevels(s);  m < mend;  ++m) {
             bool ok = ImageBufAlgo::ociodisplay (
                     (*ot.curimg)(s,m), (*A)(s,m),
                     displayname.c_str(), viewname.c_str(),
@@ -2262,6 +2282,101 @@ action_transpose (int argc, const char *argv[])
     }
 
     ot.function_times["transpose"] += timer();
+    return 0;
+}
+
+
+
+static int
+action_rotate (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_rotate, argc, argv))
+        return 0;
+    Timer timer (ot.enable_function_timing);
+
+    std::map<std::string,std::string> options;
+    extract_options (options, argv[0]);
+    std::string filtername = options["filter"];
+    bool recompute_roi = Strutil::from_string<int>(options["recompute_roi"]);
+    bool center_supplied = false;
+    std::string center = options["center"];
+    float center_x = 0.0f, center_y = 0.0f;
+    if (center.size()) {
+        string_view s (center);
+        if (Strutil::parse_float (s, center_x) &&
+            Strutil::parse_char (s, ',') &&
+            Strutil::parse_float (s, center_y)) {
+            center_supplied = true;
+        }
+    }
+
+    float angle = Strutil::from_string<float> (argv[1]);
+    ImageRecRef A (ot.pop());
+    ot.read (A);
+
+    ImageRecRef R (new ImageRec ("rotate",
+                                 ot.allsubimages ? A->subimages() : 1));
+    ot.push (R);
+
+    for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
+        float cx, cy;
+        if (center_supplied) {
+            cx = center_x;
+            cy = center_y;
+        } else {
+            ROI src_roi_full = (*A)(s).roi_full();
+            cx = 0.5f * (src_roi_full.xbegin + src_roi_full.xend);
+            cy = 0.5f * (src_roi_full.ybegin + src_roi_full.yend);
+        }
+        bool ok = ImageBufAlgo::rotate ((*R)(s), (*A)(s),
+                                        angle*float(M_PI/180.0), cx, cy,
+                                        filtername, 0.0f, recompute_roi);
+        if (! ok)
+            ot.error ("rotate", (*R)(s).geterror());
+        R->update_spec_from_imagebuf (s);
+    }
+
+    ot.function_times["rotate"] += timer();
+    return 0;
+}
+
+
+
+static int
+action_warp (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_warp, argc, argv))
+        return 0;
+    Timer timer (ot.enable_function_timing);
+
+    std::map<std::string,std::string> options;
+    extract_options (options, argv[0]);
+    std::string filtername = options["filter"];
+    bool recompute_roi = Strutil::from_string<int>(options["recompute_roi"]);
+
+    std::vector<float> M (9);
+    if (Strutil::extract_from_list_string (M, argv[1]) != 9) {
+        ot.error ("warp", "expected 9 comma-separatd floats to form a 3x3 matrix");
+        return 0;
+    }
+
+    ImageRecRef A (ot.pop());
+    ot.read (A);
+    ImageRecRef R (new ImageRec ("warp",
+                                 ot.allsubimages ? A->subimages() : 1));
+    ot.push (R);
+
+    for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
+        bool ok = ImageBufAlgo::warp ((*R)(s), (*A)(s),
+                                      *(Imath::M33f *)&M[0],
+                                      filtername, 0.0f,
+                                      recompute_roi, ImageBuf::WrapDefault);
+        if (! ok)
+            ot.error ("warp", (*R)(s).geterror());
+        R->update_spec_from_imagebuf (s);
+    }
+
+    ot.function_times["warp"] += timer();
     return 0;
 }
 
@@ -3677,6 +3792,8 @@ getargs (int argc, char *argv[])
                 "--resample %@ %s", action_resample, NULL, "Resample (640x480, 50%)",
                 "--resize %@ %s", action_resize, NULL, "Resize (640x480, 50%) (optional args: filter=%s)",
                 "--fit %@ %s", action_fit, NULL, "Resize to fit within a window size (optional args: filter=%s, pad=%d)",
+                "--rotate %@ %g", action_rotate, NULL, "Rotate pixels (argument is degrees clockwise) around the center of the display window (optional args: filter=%s:center=%f,%f:recompute_roi=%d",
+                "--warp %@ %s", action_warp, NULL, "Warp pixels (argument is a 3x3 matrix, separated by commas) (optional args: filter=%s:,recompute_roi=%d",
                 "--convolve %@", action_convolve, NULL,
                     "Convolve with a kernel",
                 "--blur %@ %s", action_blur, NULL,
