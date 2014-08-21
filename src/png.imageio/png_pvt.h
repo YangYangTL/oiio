@@ -472,9 +472,9 @@ write_info (png_structp& sp, png_infop& ip, int& color_type,
     else if (Strutil::iequals (colorspace, "GammaCorrected")) {
         png_set_gAMA (sp, ip, 1.0f/gamma);
     }
-    else if (Strutil::iequals (colorspace, "sRGB")) {
+    /*else if (Strutil::iequals (colorspace, "sRGB")) {
         png_set_sRGB_gAMA_and_cHRM (sp, ip, PNG_sRGB_INTENT_ABSOLUTE);
-    }
+    }*/
 
     // Write ICC profile, if we have anything
     const ImageIOParameter* icc_profile_parameter = spec.find_attribute(ICC_PROFILE_ATTR);
