@@ -105,8 +105,8 @@ struct EXIF_tag_info {
 
 static const EXIF_tag_info exif_tag_table[] = {
     // Skip ones handled by the usual JPEG code
-    { TIFFTAG_IMAGEWIDTH,	"Exif:ImageWidth",	TIFF_NOTYPE, 1 },
-    { TIFFTAG_IMAGELENGTH,	"Exif:ImageLength",	TIFF_NOTYPE, 1 },
+    { TIFFTAG_IMAGEWIDTH,	"Exif:ImageWidth",	TIFF_SHORT, 1 },
+    { TIFFTAG_IMAGELENGTH,	"Exif:ImageLength",	TIFF_SHORT, 1 },
     { TIFFTAG_BITSPERSAMPLE,	"Exif:BitsPerSample",	TIFF_NOTYPE, 1 },
     { TIFFTAG_COMPRESSION,	"Exif:Compression",	TIFF_NOTYPE, 1 },
     { TIFFTAG_PHOTOMETRIC,	"Exif:Photometric",	TIFF_NOTYPE, 1 },
@@ -275,7 +275,26 @@ static const EXIF_tag_info gps_tag_table[] = {
 
 class TagMap {
     typedef std::map<int, const EXIF_tag_info *> tagmap_t;
-    typedef std::map<std::string, const EXIF_tag_info *> namemap_t;
+
+
+    struct ci_less :std::binary_function<std::string, std::string, bool>
+    {
+		// case-independent (ci) compare_less binary function
+		struct nocase_compare : public std::binary_function<unsigned char,unsigned char,bool> 
+		{
+		  bool operator() (const unsigned char& c1, const unsigned char& c2) const {
+			  return tolower (c1) < tolower (c2); 
+		  }
+		};
+		bool operator() (const std::string & s1, const std::string & s2) const {
+		  return std::lexicographical_compare 
+			(s1.begin (), s1.end (),   // source range
+			s2.begin (), s2.end (),   // dest range
+			nocase_compare ());  // comparison
+		}
+    };
+	
+	typedef std::map<std::string, const EXIF_tag_info *, ci_less> namemap_t;
 public:
     TagMap (const EXIF_tag_info *tag_table) {
         for (int i = 0;  tag_table[i].tifftag >= 0;  ++i) {

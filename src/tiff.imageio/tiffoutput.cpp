@@ -375,6 +375,16 @@ TIFFOutput::put_parameter (const std::string &name, TypeDesc type,
         TIFFSetField (m_tif, TIFFTAG_ARTIST, *(char**)data);
         return true;
     }
+    if (Strutil::iequals(name, "Make") && type == TypeDesc::STRING) {
+        TIFFSetField(m_tif, TIFFTAG_MAKE, *(char**)data);
+        return true;
+    }
+    if (Strutil::iequals(name, "Model") && type == TypeDesc::STRING) {
+        TIFFSetField(m_tif, TIFFTAG_MODEL, *(char**)data);
+        return true;
+    }
+
+
     if (Strutil::iequals(name, "Compression") && type == TypeDesc::STRING) {
         int compress = COMPRESSION_LZW;  // default
         const char *str = *(char **)data;
@@ -389,12 +399,10 @@ TIFFOutput::put_parameter (const std::string &name, TypeDesc type,
                 compress = COMPRESSION_PACKBITS;
             else if (Strutil::iequals (str, "ccittrle"))
                 compress = COMPRESSION_CCITTRLE;
-            else if (Strutil::iequals (str, "tiff_deflate"))
-                compress = COMPRESSION_DEFLATE;
         }
         TIFFSetField (m_tif, TIFFTAG_COMPRESSION, compress);
         // Use predictor when using compression
-        if (compress == COMPRESSION_LZW || compress == COMPRESSION_ADOBE_DEFLATE) {
+        if (compress == COMPRESSION_LZW || compress == COMPRESSION_ADOBE_DEFLATE ) {
             if (m_spec.format == TypeDesc::FLOAT || m_spec.format == TypeDesc::DOUBLE || m_spec.format == TypeDesc::HALF) {
                 TIFFSetField (m_tif, TIFFTAG_PREDICTOR, PREDICTOR_FLOATINGPOINT);
                 // N.B. Very old versions of libtiff did not support this
@@ -565,9 +573,27 @@ TIFFOutput::write_exif_data ()
                        p.type() == TypeDesc::DOUBLE) {
                 ok = TIFFSetField (m_tif, tag, *(double *)p.data());
             }
-            if (! ok) {
-                // std::cout << "Unhandled EXIF " << p.name() << " " << p.type() << "\n";
+            else if ((tifftype == TIFF_SHORT || tifftype == TIFF_LONG) &&
+                        p.type() == TypeDesc::STRING){
+                //ok = TIFFSetField(m_tif, tag, *( *)p.data());
+                //std::cout << "Unhandled EXIF:"<<p.name()<<" "<<p.type()<<" value"<<*(char**)p.data()<<"\n";
+                if (tifftype == TIFF_SHORT){
+                    unsigned short number = (unsigned short)strtoul(*(char**)p.data(), NULL, 0);
+                    TIFFSetField(m_tif, tag, number);
+                }
+                else if (tifftype == TIFF_LONG){
+                    unsigned long number = strtoul(*(char**)p.data(), NULL, 0);
+                    TIFFSetField(m_tif, tag, number);
+                }
+
+                ok = true;
             }
+            if (! ok) {
+                 //std::cout << "Unhandled EXIF " << p.name() << " " << p.type() << "\n";
+            }
+        }
+        else{
+           // std::cout << "Not find in EXIF TAG Dictionary " << p.name() << " " << p.type() << "\n";
         }
     }
 
