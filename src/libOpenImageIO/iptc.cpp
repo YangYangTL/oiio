@@ -213,6 +213,7 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
     const ImageIOParameter *p;
     for (int i = 0;  iimtag[i].name;  ++i) {
         if ((p = spec.find_attribute (iimtag[i].name))) {
+            //std::cout << "Found IPTC:" << iimtag[i].name << "\n";
             if (iimtag[i].repeatable) {
                 std::string allvals (*(const char **)p->data());
                 std::vector<std::string> tokens;
@@ -227,6 +228,7 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
                 }
             } else {
                 // Regular, non-repeating
+                //std::cout << "Found Regure, nonrepeating IPTC:" << iimtag[i].name << "\n";
                 encode_iptc_iim_one_tag (iimtag[i].tag, iimtag[i].name,
                                          p->type(), p->data(), iptc);
             }

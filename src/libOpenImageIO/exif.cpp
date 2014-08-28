@@ -666,6 +666,9 @@ append_dir_entry_integer (const ImageIOParameter &p, const TagMap &tagmap,
     case TypeDesc::INT16:
         i = (T) *(short *)p.data();
         break;
+    case TypeDesc::STRING:
+        i = (T)strtoul(*(char**)p.data(), NULL, 0);
+        break;
     default:
         return false;
     }
@@ -689,7 +692,7 @@ encode_exif_entry (const ImageIOParameter &p, int tag,
     TIFFDataType type = tagmap.tifftype (tag);
     size_t count = (size_t) tagmap.tiffcount (tag);
     TypeDesc element = p.type().elementtype();
-
+    //std::cout << "name:" << p.name().string() << " type:"<< type<<" count:"<<count<<"\n";
     switch (type) {
     case TIFF_ASCII :
         if (p.type() == TypeDesc::STRING) {
@@ -708,6 +711,24 @@ encode_exif_entry (const ImageIOParameter &p, int tag,
             append_dir_entry (tagmap, dirs, data, tag, type, count, rat);
             return;
         }
+        else if (element == TypeDesc::STRING){
+            
+            std::string fracstr = *(char**)p.data();
+            size_t pos = fracstr.find("/");
+            std::string nom = fracstr.substr(0, pos);
+            std::string den = fracstr.substr(pos + 1, std::string::npos);
+
+            float n1 = ::atof(nom.c_str());
+            float n2 = ::atof(den.c_str());
+            float number = n1 / n2;
+            //std::cout << "SRATION STRING:" << number << "\n";
+            count = 1;
+            unsigned int *rat = (unsigned int *)alloca(2 * count*sizeof(unsigned int));
+
+            float_to_rational(number, rat[2 * 0], rat[2 * 0 + 1]);
+            append_dir_entry(tagmap, dirs, data, tag, type, count, rat);
+            return;
+        }
         break;
     case TIFF_SRATIONAL :
         if (element == TypeDesc::FLOAT) {
@@ -717,6 +738,24 @@ encode_exif_entry (const ImageIOParameter &p, int tag,
                 float_to_rational (f[i], rat[2*i], rat[2*i+1]);
             append_dir_entry (tagmap, dirs, data, tag, type, count, rat);
             return;
+        }
+        else if (element == TypeDesc::STRING){
+            std::string fracstr = *(char**)p.data();
+            size_t pos = fracstr.find("/");
+            std::string nom = fracstr.substr(0, pos);
+            std::string den = fracstr.substr(pos + 1, std::string::npos);
+
+            float n1 = ::atof(nom.c_str());
+            float n2 = ::atof(den.c_str());
+            float number = n1 / n2;
+            //std::cout << "RATION STRING:" << number << "\n";
+            count = 1;
+            unsigned int *rat = (unsigned int *)alloca(2 * count*sizeof(unsigned int));
+
+            float_to_rational(number, rat[2 * 0], rat[2 * 0 + 1]);
+            append_dir_entry(tagmap, dirs, data, tag, type, count, rat);
+            return;
+
         }
         break;
     case TIFF_SHORT :
@@ -732,6 +771,7 @@ encode_exif_entry (const ImageIOParameter &p, int tag,
             return;
         break;
     default:
+       
         break;
     }
 #if DEBUG_EXIF_WRITE
@@ -905,11 +945,15 @@ encode_exif (const ImageSpec &spec, std::vector<char> &blob)
         } else {
             // Not GPS
             int tag = exif_tagmap.tag (p.name().string());
-            if (tag < EXIFTAG_EXPOSURETIME || tag > EXIFTAG_IMAGEUNIQUEID) {
+            
+            if (tag < EXIFTAG_EXPOSURETIME || tag > 42240) { // 42240 == Exif:Gamma
+                //std::cout << "start encode tiff tag:" << p.name().string() << " type"<<p.type().elementtype()<<"\n";
                 encode_exif_entry (p, tag, tiffdirs, data, exif_tagmap);
             } else {
+                //std::cout << "start encode exif tag:" << p.name().string() << " type" << p.type().elementtype() << "\n";
                 encode_exif_entry (p, tag, exifdirs, data, exif_tagmap);
             }
+         
         }
     }
 
