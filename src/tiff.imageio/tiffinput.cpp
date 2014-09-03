@@ -259,10 +259,12 @@ private:
             unsigned int count=0;
             void *data = NULL;
             TIFFGetField(m_tif, tag, &count, &data);
-            s[0]=*(unsigned short*)data;
-            int i = s[0];
-            std::cout<<"ISO Speed Ratings **********************:"<<i<<"\n";
-            m_spec.attribute (name, i);
+            if(data!=NULL||count!=0){
+                s[0]=*(unsigned short*)data;
+                int i = s[0];
+                std::cout<<"ISO Speed Ratings **********************:"<<i<<"\n";
+                m_spec.attribute (name, i);
+            }
         }
     }
 

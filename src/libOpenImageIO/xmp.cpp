@@ -531,6 +531,10 @@ encode_xmp (const ImageSpec &spec, bool minimal)
                                 "http://ns.adobe.com/xap/1.0/rights/", minimal, XMP_AltList);
     xmp += encode_xmp_category (list, "xmpRights", "xmpRights:", NULL, NULL,
                                 "http://ns.adobe.com/xap/1.0/rights/", minimal, XMP_attribs);
+    xmp += encode_xmp_category(list, "dc", "dc:creator", NULL, "dc:creator",
+                                "http://purl.org/dc/elements/1.1/", minimal, XMP_SeqList);
+    xmp += encode_xmp_category(list, "dc", "dc:rights", NULL, "dc:rights",
+                                "http://purl.org/dc/elements/1.1/", minimal, XMP_AltList);
     xmp += encode_xmp_category (list, "dc", "dc:subject", NULL, "dc:subject",
                                 "http://purl.org/dc/elements/1.1/", minimal, XMP_BagList);
     xmp += encode_xmp_category (list, "Iptc4xmpCore", "Iptc4xmpCore:SubjectCode",
@@ -572,14 +576,18 @@ encode_xmp (const ImageSpec &spec, bool minimal)
 
   if (! xmp.empty()) {
       std::string head (
-            "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?> "
-            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"Adobe XMP Core 5.5-c002 1.148022, 2012/07/15-18:06:45        \"> <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"> "
+            "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?> "
+            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"Adobe XMP Core 5.0-c060 61.134777, 2010/02/24-17:43:58        \"> "
+            "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"> "
             );
         std::string foot (" </rdf:RDF> </x:xmpmeta> <?xpacket end=\"w\"?>");
         xmp = head + xmp 
             + foot;
     }
-
+  std::cout << "xmp to write = \n---\n" << xmp << "\n---\n";
+  std::cout << "\n\nHere's what I still haven't output:\n";
+  for (size_t i = 0; i < list.size(); ++i)
+      std::cout << xmptag[list[i].first].xmpname << "\n";
 
 #if DEBUG_XMP_WRITE
     std::cerr << "xmp to write = \n---\n" << xmp << "\n---\n";

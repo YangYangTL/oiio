@@ -191,14 +191,18 @@ encode_iptc_iim_one_tag (int tag, const char *name, TypeDesc type,
                          const void *data, std::vector<char> &iptc)
 {
     if (type == TypeDesc::STRING) {
+        // add the header
         iptc.push_back ((char)0x1c);
         iptc.push_back ((char)0x02);
+        // add the tage type
         iptc.push_back ((char)tag);
         const char *str = ((const char **)data)[0];
         int tagsize = strlen(str);
         tagsize = std::min (tagsize, 0xffff - 1); // Prevent 16 bit overflow
+        // add the tag length
         iptc.push_back ((char)(tagsize >> 8));
         iptc.push_back ((char)(tagsize & 0xff));
+        // add the tag value
         iptc.insert (iptc.end(), str, str+tagsize);
     }
 }
@@ -213,30 +217,34 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
     const ImageIOParameter *p;
     for (int i = 0;  iimtag[i].name;  ++i) {
         if ((p = spec.find_attribute (iimtag[i].name))) {
-            //std::cout << "Found IPTC:" << iimtag[i].name << "\n";
+         
             if (iimtag[i].repeatable) {
+                std::cout << "Found repetable IPTC:" << iimtag[i].name << " " << *(const char **)p->data()<< "\n";
                 std::string allvals (*(const char **)p->data());
                 std::vector<std::string> tokens;
                 Strutil::split (allvals, tokens, ";");
                 for (size_t t = 0, e = tokens.size();  t < e;  ++t) {
                     tokens[t] = Strutil::strip (tokens[t]);
                     if (tokens[t].size()) {
-                        const char *tok = &tokens[t][0];
+                        const char *tok = tokens[t].c_str();
                         encode_iptc_iim_one_tag (iimtag[i].tag, iimtag[i].name,
                                                  p->type(), &tok, iptc);
                     }
                 }
             } else {
-                // Regular, non-repeating
-                //std::cout << "Found Regure, nonrepeating IPTC:" << iimtag[i].name << "\n";
+
+                std::cout << "Found nonrepeating IPTC:" << iimtag[i].name << "\n";
                 encode_iptc_iim_one_tag (iimtag[i].tag, iimtag[i].name,
                                          p->type(), p->data(), iptc);
             }
         }
         if (iimtag[i].anothername) {
-            if ((p = spec.find_attribute (iimtag[i].anothername)))
-                encode_iptc_iim_one_tag (iimtag[i].tag, iimtag[i].anothername,
-                                         p->type(), p->data(), iptc);
+          
+            if ((p = spec.find_attribute(iimtag[i].anothername))){
+                std::cout << "Found IPTC with another name:" << iimtag[i].name << "\n";
+                encode_iptc_iim_one_tag(iimtag[i].tag, iimtag[i].anothername,
+                    p->type(), p->data(), iptc);
+            }
         }
     }
 }
