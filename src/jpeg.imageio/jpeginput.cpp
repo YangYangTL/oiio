@@ -227,9 +227,14 @@ JpgInput::open (const std::string &name, ImageSpec &newspec)
             std::string xml ((const char *)m->data, m->data_length);
             decode_xmp (xml, m_spec);
         }
-        else if (m->marker == (JPEG_APP0+13) &&
-                ! strcmp ((const char *)m->data, "Photoshop 3.0"))
-            jpeg_decode_iptc ((unsigned char *)m->data);
+        else if (m->marker == (JPEG_APP0 + 13) &&
+            !strcmp((const char *)m->data, "Photoshop 3.0")){
+#ifndef NDEBUG
+            std::cerr << "Found APP13 Photoshop 3.0 data length " << m->data_length << "\n";
+#endif
+            jpeg_decode_iptc((unsigned char *)m->data, m->data_length);
+
+        }
         else if (m->marker == JPEG_COM) {
             if (! m_spec.find_attribute ("ImageDescription", TypeDesc::STRING))
                 m_spec.attribute ("ImageDescription",
@@ -358,33 +363,55 @@ JpgInput::close ()
 
 
 void
-JpgInput::jpeg_decode_iptc (const unsigned char *buf)
+JpgInput::jpeg_decode_iptc (const unsigned char *buf, unsigned int length)
 {
+    unsigned int offset=0;
+    unsigned int bim_offset = 0;
     // APP13 blob doesn't have to be IPTC info.  Look for the IPTC marker,
     // which is the string "Photoshop 3.0" followed by a null character.
     if (strcmp ((const char *)buf, "Photoshop 3.0"))
         return;
     buf += strlen("Photoshop 3.0") + 1;
-
+    offset += 14;
     // Next are the 4 bytes "8BIM"
-    if (strncmp ((const char *)buf, "8BIM", 4))
-        return;
-    buf += 4;
 
-    // Next two bytes are the segment type, in big endian.
-    // We expect 1028 to indicate IPTC data block.
-    if (((buf[0] << 8) + buf[1]) != 1028)
-        return;
-    buf += 2;
+    while (offset < length){
 
-    // Next are 4 bytes of 0 padding, just skip it.
-    buf += 4;
+        if (strncmp((const char *)buf, "8BIM", 4)|| length-offset<7) // 7 is minimum size that includes "8BIM" and  bim_type 2 bytes and content
+            return;
+        buf += 4;
+        offset += 4;
+        // Next two bytes are the segment type, in big endian.
+        // We expect 1028 to indicate IPTC data block.
+        unsigned short bim_type = (buf[0] << 8) + buf[1];
+        buf += 2;
+        offset += 2;
+        bim_offset = buf[0] + 1;
+        bim_offset += (bim_offset & 1);
+        if (length - offset < bim_offset + 4) // another 8BIM data
+            return;
+        offset += bim_offset;
+        buf += bim_offset;
+        // Next is 4 byte (big endian) giving the size of the segment
+        int segmentsize = ((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]);
+        // Next are 4 bytes of 0 padding, just skip it.
+        buf += 4;
+        offset += 4;
+        if (length - offset < segmentsize)
+            return;
+        if (bim_type == 1028) //JPEG_BIM_IPTC_TYPE=0x0404=1028
+        {
+            
+            decode_iptc_iim(buf, segmentsize, m_spec);
+            return;
+        }
+        segmentsize += (segmentsize & 1);
 
-    // Next is 2 byte (big endian) giving the size of the segment
-    int segmentsize = (buf[0] << 8) + buf[1];
-    buf += 2;
+        buf += segmentsize;
+        offset += segmentsize;
 
-    decode_iptc_iim (buf, segmentsize, m_spec);
+    }
+
 }
 
 OIIO_PLUGIN_NAMESPACE_END

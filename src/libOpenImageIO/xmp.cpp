@@ -296,6 +296,7 @@ decode_xmp_node (pugi::xml_node node, ImageSpec &spec,
 bool
 decode_xmp (const std::string &xml, ImageSpec &spec)
 {
+    std::cout << "XMP dump:\n---\n" << xml << "\n---\n";
 #if DEBUG_XMP_READ
     std::cerr << "XMP dump:\n---\n" << xml << "\n---\n";
 #endif
@@ -535,6 +536,8 @@ encode_xmp (const ImageSpec &spec, bool minimal)
                                 "http://purl.org/dc/elements/1.1/", minimal, XMP_SeqList);
     xmp += encode_xmp_category(list, "dc", "dc:rights", NULL, "dc:rights",
                                 "http://purl.org/dc/elements/1.1/", minimal, XMP_AltList);
+    xmp += encode_xmp_category(list, "dc", "dc:keywords", NULL, "dc:keywords",
+                                "http://purl.org/dc/elements/1.1/", minimal, XMP_BagList);
     xmp += encode_xmp_category (list, "dc", "dc:subject", NULL, "dc:subject",
                                 "http://purl.org/dc/elements/1.1/", minimal, XMP_BagList);
     xmp += encode_xmp_category (list, "Iptc4xmpCore", "Iptc4xmpCore:SubjectCode",

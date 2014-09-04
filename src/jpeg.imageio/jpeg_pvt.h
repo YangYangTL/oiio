@@ -99,7 +99,7 @@ class JpgInput : public ImageInput {
     // information and adding attributes to spec.  This assumes it's in
     // the form of an IIM (Information Interchange Model), which is actually
     // considered obsolete and is replaced by an XML scheme called XMP.
-    void jpeg_decode_iptc (const unsigned char *buf);
+    void jpeg_decode_iptc (const unsigned char *buf, unsigned int length);
 
     bool read_icc_profile (j_decompress_ptr cinfo, ImageSpec& spec);
 
