@@ -79,7 +79,7 @@ struct XMPNamespace{
     const char *xmlnsname;
 };
 
-static XMPNamespace xmp_ns_tag[]{
+/*static XMPNamespace xmp_ns_tag[]={
         { 0, "http://ns.adobe.com/xap/1.0/", "xmp" },
         { 1, "http://ns.adobe.com/tiff/1.0/", "tiff" },
         { 2, "http://purl.org/dc/elements/1.1/", "dc"},
@@ -89,7 +89,7 @@ static XMPNamespace xmp_ns_tag[]{
         { 6, "http://ns.adobe.com/xap/1.0/mm/", "xmpMM"},
         { 7, "http://ns.adobe.com/xap/1.0/rights/", "xmpRights" },
         { -1, NULL, NULL }
-};
+};*/
 
 static XMPtag xmptag [] = {
     { "photoshop:AuthorsPosition", "IPTC:AuthorsPosition", TypeDesc::STRING, 0 , 4},
