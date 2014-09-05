@@ -67,6 +67,8 @@ if (CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_GNUCC)
     set (CMAKE_INCLUDE_SYSTEM_FLAG_CXX "-isystem ")
     # Ensure this macro is set for stdint.h
     add_definitions ("-D__STDC_LIMIT_MACROS")
+    # this allows native instructions to be used for sqrtf instead of a function call
+    add_definitions ("-fno-math-errno")
 endif ()
 
 if (CMAKE_COMPILER_IS_CLANG)
@@ -166,26 +168,27 @@ endif()
 if (USE_CPP11)
     message (STATUS "Building for C++11")
     add_definitions ("-std=c++11")
-    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    if (CMAKE_COMPILER_IS_CLANG)
         # C++11 doesn't like 'register' keyword, which is in Qt headers
         add_definitions ("-Wno-deprecated-register")
     endif ()
 endif ()
 
-if (USE_LIBCPLUSPLUS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+if (USE_LIBCPLUSPLUS AND CMAKE_COMPILER_IS_CLANG)
+    message (STATUS "Using libc++")
     add_definitions ("-stdlib=libc++")
 endif ()
 
-set(CMAKE_MODULE_PATH
-    "${PROJECT_SOURCE_DIR}/src/cmake/modules"
-    "${PROJECT_SOURCE_DIR}/src/cmake")
+set (CMAKE_MODULE_PATH
+     "${PROJECT_SOURCE_DIR}/src/cmake/modules"
+     "${PROJECT_SOURCE_DIR}/src/cmake")
 
 # Set the default namespace
-if(NOT OIIO_NAMESPACE)
-  set(OIIO_NAMESPACE OpenImageIO CACHE STRING
-      "Specify the master OpenImageIO C++ namespace: Options include OpenImageIO OpenImageIO_<YOURFACILITY> etc."
-      FORCE)
-endif(NOT OIIO_NAMESPACE)
+if (NOT OIIO_NAMESPACE)
+    set (OIIO_NAMESPACE OpenImageIO CACHE STRING
+         "Specify the master OpenImageIO C++ namespace: Options include OpenImageIO OpenImageIO_<YOURFACILITY> etc."
+         FORCE)
+endif ()
 
 message(STATUS "Setting Namespace to: ${OIIO_NAMESPACE}")
 
@@ -382,7 +385,7 @@ oiio_add_tests (gpsread misnamed-file nonwhole-tiles
                 python-imagebuf python-imagebufalgo
                 maketx
                 texture-blurtube texture-crop texture-cropover
-                texture-fill texture-filtersize
+                texture-derivs texture-fill texture-filtersize
                 texture-gray texture-grid
                 texture-missing texture-overscan
                 texture-pointsample texture-width0blur texture-res

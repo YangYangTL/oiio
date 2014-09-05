@@ -933,7 +933,7 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
             newspec.full_width  = newspec.width;
             newspec.full_height = newspec.height;
             newspec.full_depth  = newspec.depth;
-            std::string name = src->name() + ".constant_color";
+            std::string name = std::string(src->name()) + ".constant_color";
             src->reset(name, newspec);
             ImageBufAlgo::fill (*src, &constantColor[0]);
             if (verbose) {
@@ -1428,8 +1428,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
 
 bool
 ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
-                            const std::string &filename,
-                            const std::string &outputfilename,
+                            string_view filename,
+                            string_view outputfilename,
                             const ImageSpec &configspec,
                             std::ostream *outstream)
 {
@@ -1442,7 +1442,7 @@ ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
 bool
 ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
                             const std::vector<std::string> &filenames,
-                            const std::string &outputfilename,
+                            string_view outputfilename,
                             const ImageSpec &configspec,
                             std::ostream *outstream_ptr)
 {
@@ -1455,7 +1455,7 @@ ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
 bool
 ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
                             const ImageBuf &input,
-                            const std::string &outputfilename,
+                            string_view outputfilename,
                             const ImageSpec &configspec,
                             std::ostream *outstream)
 {
