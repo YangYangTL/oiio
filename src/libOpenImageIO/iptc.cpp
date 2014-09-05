@@ -273,8 +273,8 @@ encode_iptc_iim_one_tag (int tag, const char *name, TypeDesc type,
              unsigned short record_version=(unsigned short)atoi(str);
              tagsize=2;
              // add the tag length
-             iptc.push_back ((char)(tagsize >> 8));
-             iptc.push_back ((char)(tagsize & 0xff));
+             iptc.push_back ((char)(0x00));
+             iptc.push_back ((char)(0x02));
              iptc.push_back((char)record_version>>8);
              iptc.push_back((char)record_version&0xff);
 
@@ -290,7 +290,7 @@ encode_iptc_iim_one_tag (int tag, const char *name, TypeDesc type,
             // add the tag value
             iptc.insert (iptc.end(), str, str+tagsize);
         }
-        std::cout << "Inserted IPTC name:" << name << " tag:" << tag << "size:"<<tagsize<<"\n";
+        //std::cout << "Inserted IPTC name:" << name << " tag:" << tag << "size:"<<tagsize<<"\n";
     }
     else{
         //std::cout << "Not hanndled IPTC name:" << name << " tag:"<<tag<<"\n";
@@ -309,7 +309,7 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
         if ((p = spec.find_attribute(iim_envelope_record[i].name))) {
 
             if (iim_envelope_record[i].repeatable) {
-                std::cout << "Found repetable envelope IPTC:" << iim_envelope_record[i].name << " " << *(const char **)p->data() << "\n";
+                //std::cout << "Found repetable envelope IPTC:" << iim_envelope_record[i].name << " " << *(const char **)p->data() << "\n";
                 std::string allvals(*(const char **)p->data());
                 std::vector<std::string> tokens;
                 Strutil::split(allvals, tokens, ";");
@@ -324,7 +324,7 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
             }
             else {
 
-                std::cerr << "Found nonrepeating IPTC:" << iim_envelope_record[i].name << "\n";
+                //std::cerr << "Found nonrepeating IPTC:" << iim_envelope_record[i].name << "\n";
                 encode_iptc_iim_one_tag(iim_envelope_record[i].tag, iim_envelope_record[i].name,
                     p->type(), p->data(), iptc,1);
             }
@@ -332,7 +332,7 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
         else if (iim_envelope_record[i].anothername) {
 
             if ((p = spec.find_attribute(iim_envelope_record[i].anothername))){
-                std::cerr << "Found IPTC with another name:" << iim_envelope_record[i].name << "\n";
+                //std::cerr << "Found IPTC with another name:" << iim_envelope_record[i].name << "\n";
                 encode_iptc_iim_one_tag(iim_envelope_record[i].tag, iim_envelope_record[i].anothername,
                     p->type(), p->data(), iptc,1);
             }
@@ -343,7 +343,7 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
         if ((p = spec.find_attribute (iimtag[i].name))) {
          
             if (iimtag[i].repeatable) {
-                std::cerr << "Found repetable IPTC:" << iimtag[i].name << " " << *(const char **)p->data()<< "\n";
+                //std::cerr << "Found repetable IPTC:" << iimtag[i].name << " " << *(const char **)p->data()<< "\n";
                 std::string allvals (*(const char **)p->data());
                 std::vector<std::string> tokens;
                 Strutil::split (allvals, tokens, ";");
@@ -357,9 +357,16 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
                 }
             } else {
 
-                std::cerr << "Found nonrepeating IPTC:" << iimtag[i].name << "\n";
-                encode_iptc_iim_one_tag (iimtag[i].tag, iimtag[i].name,
-                                         p->type(), p->data(), iptc);
+                //std::cerr << "Found nonrepeating IPTC:" << iimtag[i].name << "\n";
+                if (Strutil::istarts_with(iimtag[i].name, "IPTC:RecordVersion")){
+                    //std::cerr << "type:"<< p->type() << "\n"; 
+                    // ignore it, currently writing IPTC:RecordVersioin will result corrupted Adobe Data
+                }
+                else{
+                    encode_iptc_iim_one_tag (iimtag[i].tag, iimtag[i].name,
+                                             p->type(), p->data(), iptc);
+                }
+
             }
         }
         else if (iimtag[i].anothername) {

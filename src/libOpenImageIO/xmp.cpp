@@ -70,79 +70,98 @@ struct XMPtag {
     const char *oiioname;     // Attribute name we use
     TypeDesc oiiotype;        // Type we use
     int special;              // Special handling
+    int xmpnsid;              // nsid in XMPNamespace
+};
+
+struct XMPNamespace{
+    int nsid;
+    const char *namespacename;
+    const char *xmlnsname;
+};
+
+static XMPNamespace xmp_ns_tag[]{
+        { 0, "http://ns.adobe.com/xap/1.0/", "xmp" },
+        { 1, "http://ns.adobe.com/tiff/1.0/", "tiff" },
+        { 2, "http://purl.org/dc/elements/1.1/", "dc"},
+        { 3, "http://ns.adobe.com/exif/1.0/", "exif" },
+        { 4, "http://ns.adobe.com/photoshop/1.0/", "photoshop" },
+        { 5, "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/", "Iptc4xmpCore" },
+        { 6, "http://ns.adobe.com/xap/1.0/mm/", "xmpMM"},
+        { 7, "http://ns.adobe.com/xap/1.0/rights/", "xmpRights" },
+        { -1, NULL, NULL }
 };
 
 static XMPtag xmptag [] = {
-    { "photoshop:AuthorsPosition", "IPTC:AuthorsPosition", TypeDesc::STRING, 0 },
-    { "photoshop:CaptionWriter", "IPTC:CaptionWriter", TypeDesc::STRING, 0 },
-    { "photoshop:Category", "IPTC:Category", TypeDesc::STRING, 0 },
-    { "photoshop:City", "IPTC:City", TypeDesc::STRING, 0 },
-    { "photoshop:Country", "IPTC:Country", TypeDesc::STRING, 0 },
-    { "photoshop:Credit", "IPTC:Provider", TypeDesc::STRING, 0 },
-    { "photoshop:DateCreated", "DateTime", TypeDesc::STRING, DateConversion|TiffRedundant },
-    { "photoshop:Headline", "IPTC:Headline", TypeDesc::STRING, 0 },
-    { "photoshop:Instructions", "IPTC:Instructions", TypeDesc::STRING, 0 },
-    { "photoshop:Source", "IPTC:Source", TypeDesc::STRING, 0 },
-    { "photoshop:State", "IPTC:State", TypeDesc::STRING, 0 },
-    { "photoshop:SupplementalCategories", "IPTC:SupplementalCategories", TypeDesc::STRING, IsList|Suppress },  // FIXME -- un-suppress when we have it working
-    { "photoshop:TransmissionReference", "IPTC:TransmissionReference", TypeDesc::STRING, 0 },
-    { "photoshop:Urgency", "photoshop:Urgency", TypeDesc::INT, 0 },
+    { "photoshop:AuthorsPosition", "IPTC:AuthorsPosition", TypeDesc::STRING, 0 , 4},
+    { "photoshop:CaptionWriter", "IPTC:CaptionWriter", TypeDesc::STRING, 0 , 4},
+    { "photoshop:Category", "IPTC:Category", TypeDesc::STRING, 0, 4 },
+    { "photoshop:City", "IPTC:City", TypeDesc::STRING, 0, 4 },
+    { "photoshop:Country", "IPTC:Country", TypeDesc::STRING, 0 , 4},
+    { "photoshop:Credit", "IPTC:Provider", TypeDesc::STRING, 0 , 4},
+    { "photoshop:DateCreated", "DateTime", TypeDesc::STRING, DateConversion|TiffRedundant, 4 },
+    { "photoshop:Headline", "IPTC:Headline", TypeDesc::STRING, 0, 4 },
+    { "photoshop:Instructions", "IPTC:Instructions", TypeDesc::STRING, 0, 4 },
+    { "photoshop:Source", "IPTC:Source", TypeDesc::STRING, 0, 4 },
+    { "photoshop:State", "IPTC:State", TypeDesc::STRING, 0 , 4},
+    { "photoshop:SupplementalCategories", "IPTC:SupplementalCategories", TypeDesc::STRING, IsList|Suppress, 4 },  // FIXME -- un-suppress when we have it working
+    { "photoshop:TransmissionReference", "IPTC:TransmissionReference", TypeDesc::STRING, 0, 4 },
+    { "photoshop:Urgency", "photoshop:Urgency", TypeDesc::INT, 0, 4 },
 
-    { "tiff:Compression", "tiff:Compression", TypeDesc::INT, TiffRedundant },
-    { "tiff:PlanarConfiguration", "tiff:PlanarConfiguration", TypeDesc::INT, TiffRedundant },
-    { "tiff:PhotometricInterpretation", "tiff:PhotometricInterpretation", TypeDesc::INT, TiffRedundant },
-    { "tiff:subfiletype", "tiff:subfiletype", TypeDesc::INT, TiffRedundant },
-    { "tiff:Orientation", "Orientation", TypeDesc::INT, TiffRedundant },
-    { "tiff:XResolution", "XResolution", TypeDesc::FLOAT, Rational|TiffRedundant },
-    { "tiff:YResolution", "YResolution", TypeDesc::FLOAT, Rational|TiffRedundant },
-    { "tiff:ResolutionUnit", "ResolutionUnit", TypeDesc::INT, TiffRedundant },
+    { "tiff:Compression", "tiff:Compression", TypeDesc::INT, TiffRedundant, 1 },
+    { "tiff:PlanarConfiguration", "tiff:PlanarConfiguration", TypeDesc::INT, TiffRedundant, 1 },
+    { "tiff:PhotometricInterpretation", "tiff:PhotometricInterpretation", TypeDesc::INT, TiffRedundant, 1 },
+    { "tiff:subfiletype", "tiff:subfiletype", TypeDesc::INT, TiffRedundant, 1 },
+    { "tiff:Orientation", "Orientation", TypeDesc::INT, TiffRedundant, 1 },
+    { "tiff:XResolution", "XResolution", TypeDesc::FLOAT, Rational|TiffRedundant, 1 },
+    { "tiff:YResolution", "YResolution", TypeDesc::FLOAT, Rational|TiffRedundant, 1 },
+    { "tiff:ResolutionUnit", "ResolutionUnit", TypeDesc::INT, TiffRedundant, 1 },
 
-    { "exif:ColorSpace", "Exif:ColorSpace", TypeDesc::INT, ExifRedundant },
-    { "exifEX:PhotographicSensitivity", "Exif:ISOSpeedRatings", TypeDesc::INT, ExifRedundant },
+    { "exif:ColorSpace", "Exif:ColorSpace", TypeDesc::INT, ExifRedundant, 3 },
+    { "exifEX:PhotographicSensitivity", "Exif:ISOSpeedRatings", TypeDesc::INT, ExifRedundant,3 },
 
-    { "xmp:CreateDate", "DateTime", TypeDesc::STRING, DateConversion|TiffRedundant },
-    { "xmp:CreatorTool", "Software", TypeDesc::STRING, TiffRedundant },
-    { "xmp:Label", "IPTC:Label", TypeDesc::STRING, 0 },
-    { "xmp:MetadataDate", "IPTC:MetadataDate", TypeDesc::STRING, DateConversion },
-    { "xmp:ModifyDate", "IPTC:ModifyDate", TypeDesc::STRING, DateConversion },
+    { "xmp:CreateDate", "DateTime", TypeDesc::STRING, DateConversion|TiffRedundant, 0 },
+    { "xmp:CreatorTool", "Software", TypeDesc::STRING, TiffRedundant, 0 },
+    { "xmp:Label", "IPTC:Label", TypeDesc::STRING, 0, 0 },
+    { "xmp:MetadataDate", "IPTC:MetadataDate", TypeDesc::STRING, DateConversion, 0 },
+    { "xmp:ModifyDate", "IPTC:ModifyDate", TypeDesc::STRING, DateConversion, 0 },
     { "xmp:Rating", "IPTC:Rating", TypeDesc::INT, 0 },
 
-    { "xmpMM:DocumentID", "IPTC:DocumentID", TypeDesc::STRING, 0 },
-    { "xmpMM:History", "ImageHistory", TypeDesc::STRING, IsSeq|Suppress },
-    { "xmpMM:InstanceID", "IPTC:InstanceID", TypeDesc::STRING, 0 },
-    { "xmpMM:OriginalDocumentID", "IPTC:OriginalDocumentID", TypeDesc::STRING, 0 },
+    { "xmpMM:DocumentID", "IPTC:DocumentID", TypeDesc::STRING, 0 ,6 },
+    { "xmpMM:History", "ImageHistory", TypeDesc::STRING, IsSeq|Suppress ,6 },
+    { "xmpMM:InstanceID", "IPTC:InstanceID", TypeDesc::STRING, 0, 6 },
+    { "xmpMM:OriginalDocumentID", "IPTC:OriginalDocumentID", TypeDesc::STRING, 0, 6 },
 
-    { "xmpRights:Marked", "IPTC:CopyrightStatus", TypeDesc::INT, IsBool },
-    { "xmpRights:WebStatement", "IPTC:CopyrightInfoURL", TypeDesc::STRING, 0 },
-    { "xmpRights:UsageTerms", "IPTC:RightsUsageTerms", TypeDesc::STRING, 0 },
+    { "xmpRights:Marked", "IPTC:CopyrightStatus", TypeDesc::INT, IsBool, 7 },
+    { "xmpRights:WebStatement", "IPTC:CopyrightInfoURL", TypeDesc::STRING, 0, 7 },
+    { "xmpRights:UsageTerms", "IPTC:RightsUsageTerms", TypeDesc::STRING, 0 , 7},
 
-    { "dc:format", "", TypeDesc::STRING, TiffRedundant|Suppress },
-    { "dc:Description", "ImageDescription", TypeDesc::STRING, TiffRedundant },
-    { "dc:Creator", "Artist", TypeDesc::STRING, TiffRedundant },
-    { "dc:Rights", "Copyright", TypeDesc::STRING, TiffRedundant },
-    { "dc:title", "IPTC:ObjectName", TypeDesc::STRING, 0 },
-    { "dc:subject", "Keywords", TypeDesc::STRING, IsList },
-    { "dc:keywords", "Keywords", TypeDesc::STRING, IsList },
+    { "dc:format", "", TypeDesc::STRING, TiffRedundant|Suppress, 2 },
+    { "dc:Description", "ImageDescription", TypeDesc::STRING, TiffRedundant, 2 },
+    { "dc:creator", "Artist", TypeDesc::STRING, TiffRedundant, 2 },
+    { "dc:rights", "Copyright", TypeDesc::STRING, TiffRedundant, 2 },
+    { "dc:title", "IPTC:ObjectName", TypeDesc::STRING, 0, 2 },
+    { "dc:subject", "Keywords", TypeDesc::STRING, IsList, 2 },
+    { "dc:keywords", "Keywords", TypeDesc::STRING, IsList, 2 },
 
-    { "Iptc4xmpCore:IntellectualGenre", "IPTC:IntellectualGenre", TypeDesc::STRING, 0 },
+    { "Iptc4xmpCore:IntellectualGenre", "IPTC:IntellectualGenre", TypeDesc::STRING, 0 , 5},
     { "Iptc4xmpCore:CountryCode", "IPTC:CountryCode", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:CreatorContactInfo", "IPTC:CreatorContactInfo", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:ContactInfoDetails", "IPTC:Contact", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:CiAdrExtadr", "IPTC:ContactInfoAddress", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:CiAdrCity", "IPTC:ContactInfoCity", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:CiAdrRegion", "IPTC:ContactInfoState", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:CiAdrPcode", "IPTC:ContactInfoPostalCode", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:CiAdrCtry", "IPTC:ContactInfoCountry", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:CiEmailWork", "IPTC:ContactInfoEmail", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:CiTelWork", "IPTC:ContactInfoPhone", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:CiUrlWork", "IPTC:ContactInfoURL", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:Location", "IPTC:Sublocation", TypeDesc::STRING, 0 },
-    { "Iptc4xmpCore:SubjectCode", "IPTC:SubjectCode", TypeDesc::STRING, IsList },
-    { "Iptc4xmpCore:Scene", "IPTC:SceneCode", TypeDesc::STRING, IsList },
-    { "Iptc4xmpExt:PersonInImage", "IPTC:PersonInImage", TypeDesc::STRING, IsList },
+    { "Iptc4xmpCore:CreatorContactInfo", "IPTC:CreatorContactInfo", TypeDesc::STRING, 0, 5 },
+    { "Iptc4xmpCore:ContactInfoDetails", "IPTC:Contact", TypeDesc::STRING, 0 , 5},
+    { "Iptc4xmpCore:CiAdrExtadr", "IPTC:ContactInfoAddress", TypeDesc::STRING, 0, 5 },
+    { "Iptc4xmpCore:CiAdrCity", "IPTC:ContactInfoCity", TypeDesc::STRING, 0, 5 },
+    { "Iptc4xmpCore:CiAdrRegion", "IPTC:ContactInfoState", TypeDesc::STRING, 0, 5 },
+    { "Iptc4xmpCore:CiAdrPcode", "IPTC:ContactInfoPostalCode", TypeDesc::STRING, 0, 5 },
+    { "Iptc4xmpCore:CiAdrCtry", "IPTC:ContactInfoCountry", TypeDesc::STRING, 0, 5 },
+    { "Iptc4xmpCore:CiEmailWork", "IPTC:ContactInfoEmail", TypeDesc::STRING, 0, 5 },
+    { "Iptc4xmpCore:CiTelWork", "IPTC:ContactInfoPhone", TypeDesc::STRING, 0, 5 },
+    { "Iptc4xmpCore:CiUrlWork", "IPTC:ContactInfoURL", TypeDesc::STRING, 0, 5 },
+    { "Iptc4xmpCore:Location", "IPTC:Sublocation", TypeDesc::STRING, 0, 5 },
+    { "Iptc4xmpCore:SubjectCode", "IPTC:SubjectCode", TypeDesc::STRING, IsList, 5 },
+    { "Iptc4xmpCore:Scene", "IPTC:SceneCode", TypeDesc::STRING, IsList, 5 },
+    { "Iptc4xmpExt:PersonInImage", "IPTC:PersonInImage", TypeDesc::STRING, IsList, 5 },
 
-    { "rdf:li", "" },  // ignore these strays
-    { NULL, NULL }
+    { "rdf:li", "",  },  // ignore these strays
+    { NULL, NULL, }
 };
 
 
@@ -296,7 +315,7 @@ decode_xmp_node (pugi::xml_node node, ImageSpec &spec,
 bool
 decode_xmp (const std::string &xml, ImageSpec &spec)
 {
-    std::cout << "XMP dump:\n---\n" << xml << "\n---\n";
+
 #if DEBUG_XMP_READ
     std::cerr << "XMP dump:\n---\n" << xml << "\n---\n";
 #endif
@@ -465,7 +484,6 @@ encode_xmp_category (std::vector<std::pair<int,std::string> > &list,
     if (xmp.length() && xmp_minimal.length())
         xmp += ' ' + xmp_minimal;
 
-#if 1
     if (xmp.length()) {
         if (control == XMP_BagList)
             xmp = Strutil::format ("<%s><rdf:Bag> %s </rdf:Bag></%s>",
@@ -479,13 +497,10 @@ encode_xmp_category (std::vector<std::pair<int,std::string> > &list,
             xmp = Strutil::format ("<%s><rdf:Alt> %s </rdf:Alt></%s>",
                                    nodename ? nodename : xmlnamespace, xmp,
                                    nodename ? nodename : xmlnamespace);
-#if 0
         else if (control == XMP_nodes)
             xmp = Strutil::format("<%s>%s</%s>",
                                    nodename ? nodename : xmlnamespace, xmp,
                                    nodename ? nodename : xmlnamespace);
- nodename);
-#endif
 
         std::string r;
         r += Strutil::format ("<rdf:Description rdf:about=\"\" "
@@ -498,7 +513,6 @@ encode_xmp_category (std::vector<std::pair<int,std::string> > &list,
             r += " </rdf:Description>";
         return r;
     }
-#endif
 
 #if DEBUG_XMP_WRITE
     std::cerr << "  Nothing to output\n";
@@ -507,6 +521,181 @@ encode_xmp_category (std::vector<std::pair<int,std::string> > &list,
 }
 
 
+static std::string
+encode_xmp_nodes(const char *nodename, const char *xmlnamespace, std::string val, XmpControl control){
+    std::string xmp;
+    std::string x;
+    if (control == XMP_attribs)
+        x = Strutil::format("%s=\"%s\"", nodename, val);
+    else if (control == XMP_AltList || control == XMP_BagList || control == XMP_SeqList) {
+        std::vector<std::string> vals;
+        Strutil::split(val, vals, ";");
+        for (size_t i = 0; i < vals.size(); ++i) {
+            vals[i] = Strutil::strip(vals[i]);
+            x += Strutil::format("<rdf:li>%s</rdf:li>", vals[i]);
+        }
+    }
+
+    if (control == XMP_BagList)
+        xmp = Strutil::format("<%s><rdf:Bag> %s </rdf:Bag></%s>",
+        nodename ? nodename : xmlnamespace, x,
+        nodename ? nodename : xmlnamespace);
+    else if (control == XMP_SeqList)
+        xmp = Strutil::format("<%s><rdf:Seq> %s </rdf:Seq></%s>",
+        nodename ? nodename : xmlnamespace, x,
+        nodename ? nodename : xmlnamespace);
+    else if (control == XMP_AltList)
+        xmp = Strutil::format("<%s><rdf:Alt> %s </rdf:Alt></%s>",
+        nodename ? nodename : xmlnamespace, x,
+        nodename ? nodename : xmlnamespace);
+    else if (control == XMP_nodes)
+        xmp = Strutil::format("<%s>%s</%s>",
+        nodename ? nodename : xmlnamespace, val,
+        nodename ? nodename : xmlnamespace);
+    return xmp;
+}
+
+static std::string
+encode_xmp_properties(std::vector<std::pair<int, std::string> > &list,
+const char *xmlnamespace, const char*url){
+    std::string xmpproperty;
+    xmpproperty += Strutil::format("<rdf:Description rdf:about=\"\" "
+        "xmlns:%s=\"%s\"%s", xmlnamespace, url, ">");
+    if (!strcmp(url, "http://ns.adobe.com/xap/1.0/")){
+
+        for (size_t li = 0; li < list.size(); ++li) {
+            int i = list[li].first;
+            const std::string &val(list[li].second);
+            int nsid = xmptag[i].xmpnsid;
+            const char *xmpname(xmptag[i].xmpname);
+            if (nsid == 0){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_nodes);
+            }
+            
+        }
+
+    }
+    if (!strcmp(url, "http://ns.adobe.com/xap/1.0/mm/")){
+
+        for (size_t li = 0; li < list.size(); ++li) {
+            int i = list[li].first;
+            const std::string &val(list[li].second);
+            int nsid = xmptag[i].xmpnsid;
+            const char *xmpname(xmptag[i].xmpname);
+            if (nsid == 6){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_nodes);
+            }
+
+        }
+
+    }
+    if (!strcmp(url, "http://ns.adobe.com/xap/1.0/rights/")){
+
+        for (size_t li = 0; li < list.size(); ++li) {
+            int i = list[li].first;
+            const std::string &val(list[li].second);
+            int nsid = xmptag[i].xmpnsid;
+            const char *xmpname(xmptag[i].xmpname);
+            if (nsid == 7){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_nodes);
+            }
+
+        }
+
+    }
+    if (!strcmp(url, "http://ns.adobe.com/photoshop/1.0/")){
+
+        for (size_t li = 0; li < list.size(); ++li) {
+            int i = list[li].first;
+            const std::string &val(list[li].second);
+            int nsid = xmptag[i].xmpnsid;
+            const char *xmpname(xmptag[i].xmpname);
+            if (nsid == 4){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_nodes);
+            }
+
+        }
+
+    }
+    if (!strcmp(url, "http://ns.adobe.com/tiff/1.0/")){
+
+        for (size_t li = 0; li < list.size(); ++li) {
+            int i = list[li].first;
+            const std::string &val(list[li].second);
+            int nsid = xmptag[i].xmpnsid;
+            const char *xmpname(xmptag[i].xmpname);
+            if (nsid == 1){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_nodes);
+            }
+
+        }
+
+    }
+    if (!strcmp(url, "http://purl.org/dc/elements/1.1/")){
+
+        for (size_t li = 0; li < list.size(); ++li) {
+            int i = list[li].first;
+            const std::string &val(list[li].second);
+            int nsid = xmptag[i].xmpnsid;
+            const char *xmpname(xmptag[i].xmpname);
+            if (nsid == 2 && Strutil::istarts_with(xmpname, "dc:keywords")){
+                continue;
+            }
+            if (nsid == 2 && Strutil::istarts_with(xmpname, "dc:subject")){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_BagList);
+            }
+            else if (nsid == 2 && Strutil::istarts_with(xmpname, "dc:creator")){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_SeqList);
+            }
+            else if (nsid == 2 && Strutil::istarts_with(xmpname, "dc:rights")){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_AltList);
+            }
+            else if (nsid == 2){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_nodes);
+            }
+        }
+
+    }
+    if (!strcmp(url, "http://ns.adobe.com/exif/1.0/")){
+
+        for (size_t li = 0; li < list.size(); ++li) {
+            int i = list[li].first;
+            const std::string &val(list[li].second);
+            int nsid = xmptag[i].xmpnsid;
+            const char *xmpname(xmptag[i].xmpname);
+            if (nsid == 3){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_nodes);
+            }
+
+        }
+
+    }
+      
+    if (!strcmp(url, "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/")){
+
+
+
+        /// create contact info
+        std::string cihead("<Iptc4xmpCore:CreatorContactInfo rdf:parseType=\"Resource\">");
+        xmpproperty += cihead;
+        for (size_t li = 0; li < list.size(); ++li) {
+            int i = list[li].first;
+            const std::string &val(list[li].second);
+            int nsid = xmptag[i].xmpnsid;
+            const char *xmpname(xmptag[i].xmpname);
+            if (nsid == 5 && Strutil::istarts_with(xmpname, "Iptc4xmpCore:Ci")){
+                xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_nodes);
+            }
+
+        }
+        std::string cifoot("</Iptc4xmpCore:CreatorContactInfo>");
+        xmpproperty += cifoot;
+    }
+
+    xmpproperty += " </rdf:Description>";
+    return xmpproperty;
+
+}
 
 std::string 
 encode_xmp (const ImageSpec &spec, bool minimal)
@@ -515,65 +704,19 @@ encode_xmp (const ImageSpec &spec, bool minimal)
     gather_xmp_attribs (spec, list);
 
     std::string xmp;
+    xmp += encode_xmp_properties(list, "tiff", "http://ns.adobe.com/tiff/1.0/");
+    xmp += encode_xmp_properties(list, "xmp", "http://ns.adobe.com/xap/1.0/");
+    xmp += encode_xmp_properties(list, "Iptc4xmpCore", "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/");
+ 
 
-#if 1
-    // This stuff seems to work
-    xmp += encode_xmp_category (list, "photoshop", "photoshop:", NULL, NULL,
-                                "http://ns.adobe.com/photoshop/1.0/", minimal, XMP_attribs);
-    xmp += encode_xmp_category (list, "xmp", "xmp:Rating", NULL, NULL,
-                                "http://ns.adobe.com/xap/1.0/", minimal, XMP_attribs);
-    xmp += encode_xmp_category (list, "xmp", "xmp:CreateDate", NULL, NULL,
-                                "http://ns.adobe.com/xap/1.0/", false, XMP_attribs);
-    xmp += encode_xmp_category (list, "xmp", "xmp:ModifyDate", NULL, NULL,
-                                "http://ns.adobe.com/xap/1.0/", false, XMP_attribs);
-    xmp += encode_xmp_category (list, "xmp", "xmp:MetadataDate", NULL, NULL,
-                                "http://ns.adobe.com/xap/1.0/", false, XMP_attribs);
-    xmp += encode_xmp_category (list, "xmpRights", "xmpRights:UsageTerms", NULL, "xmpRights:UsageTerms",
-                                "http://ns.adobe.com/xap/1.0/rights/", minimal, XMP_AltList);
-    xmp += encode_xmp_category (list, "xmpRights", "xmpRights:", NULL, NULL,
-                                "http://ns.adobe.com/xap/1.0/rights/", minimal, XMP_attribs);
-    xmp += encode_xmp_category(list, "dc", "dc:creator", NULL, "dc:creator",
-                                "http://purl.org/dc/elements/1.1/", minimal, XMP_SeqList);
-    xmp += encode_xmp_category(list, "dc", "dc:rights", NULL, "dc:rights",
-                                "http://purl.org/dc/elements/1.1/", minimal, XMP_AltList);
-    xmp += encode_xmp_category(list, "dc", "dc:keywords", NULL, "dc:keywords",
-                                "http://purl.org/dc/elements/1.1/", minimal, XMP_BagList);
-    xmp += encode_xmp_category (list, "dc", "dc:subject", NULL, "dc:subject",
-                                "http://purl.org/dc/elements/1.1/", minimal, XMP_BagList);
-    xmp += encode_xmp_category (list, "Iptc4xmpCore", "Iptc4xmpCore:SubjectCode",
-                                NULL, "Iptc4xmpCore:SubjectCode",
-                                "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/",
-                                false, XMP_BagList);
-    xmp += encode_xmp_category (list, "Iptc4xmpCore", "Iptc4xmpCore:",
-                                "Iptc4xmpCore:Ci", NULL,
-                                "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/",
-                                minimal, XMP_attribs);
-    xmp += encode_xmp_category (list, "Iptc4xmpCore", "Iptc4xmpCore:Ci", NULL,
-                                "Iptc4xmpCore:CreatorContactInfo",
-                                "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/",
-                                minimal, XMP_attribs);
-    xmp += encode_xmp_category (list, "Iptc4xmpCore", "Iptc4xmpCore:Scene", NULL,
-                                "Iptc4xmpCore:Scene",
-                                "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/",
-                                minimal, XMP_BagList);
+    //xmp += encode_xmp_properties(list, "xmpMM", "http://ns.adobe.com/xap/1.0/mm/");
+    xmp += encode_xmp_properties(list, "xmpRights", "http://ns.adobe.com/xap/1.0/rights");
+    xmp += encode_xmp_properties(list, "dc", "http://purl.org/dc/elements/1.1/");
+    //xmp += encode_xmp_properties(list, "exif", "http://ns.adobe.com/exif/1.0/");
 
-    xmp += encode_xmp_category (list, "xmpMM", "xmpMM:", NULL, NULL,
-                                "http://ns.adobe.com/xap/1.0/mm/", minimal, XMP_attribs);
-#endif
 
-    xmp += encode_xmp_category (list, "xmp", "xmp:", NULL, NULL,
-                                "http://ns.adobe.com/xap/1.0/", minimal, XMP_nodes);
+    xmp += encode_xmp_properties(list, "photoshop", "http://ns.adobe.com/photoshop/1.0/");
 
-    xmp += encode_xmp_category (list, "tiff", "tiff:", NULL, NULL,
-                                "http://ns.adobe.com/tiff/1.0/", minimal, XMP_attribs);
-#if 0
-    // Doesn't work yet
-    xmp += encode_xmp_category (list, "xapRights", "xapRights:", NULL, NULL,
-                                "http://ns.adobe.com/xap/1.0/rights/", minimal, XMP_attribs);
-//    xmp += encode_xmp_category (list, "dc", "dc:", NULL, NULL,
-//                                "http://purl.org/dc/elements/1.1/", minimal, XMP_attribs);
-
-#endif
 
 // FIXME exif xmp stRef stVer stJob xmpDM 
 
