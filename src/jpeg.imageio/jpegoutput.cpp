@@ -160,6 +160,22 @@ JpgOutput::open (const std::string &name, const ImageSpec &newspec,
     m_cinfo.X_density = 72;
     m_cinfo.Y_density = 72;
     m_cinfo.write_JFIF_header = TRUE;
+    /// check where use progressive compression mode
+    int progressive_jpeg = 0;
+    const ImageIOParameter *progressive = newspec.find_attribute("JpegProgressive", TypeDesc::INT);
+    if (progressive){
+        progressive_jpeg = *(const int*)progressive->data();
+        if (progressive_jpeg == 1){
+            jpeg_simple_progression(&m_cinfo);
+        }
+    }
+    /* TRUE=optimize entropy encoding parms */
+    int optimize_coding = 0; //False
+    const ImageIOParameter *optimize_cod = newspec.find_attribute("OptimizeCoding", TypeDesc::INT);
+    if (optimize_cod){
+        optimize_coding = *(const int*)optimize_cod->data();
+        m_cinfo.optimize_coding = optimize_coding; // TRUE
+    }
 
     if (m_copy_coeffs) {
         // Back door for copy()
@@ -173,6 +189,7 @@ JpgOutput::open (const std::string &name, const ImageSpec &newspec,
         DBG std::cout << "out open: set_defaults\n";
         int quality = newspec.get_int_attribute ("CompressionQuality", 98);
         jpeg_set_quality (&m_cinfo, quality, TRUE);   // baseline values
+
         DBG std::cout << "out open: set_quality\n";
         jpeg_start_compress (&m_cinfo, TRUE);         // start working
         DBG std::cout << "out open: start_compress\n";
@@ -190,22 +207,8 @@ JpgOutput::open (const std::string &name, const ImageSpec &newspec,
     if (Strutil::iequals (m_spec.get_string_attribute ("oiio:ColorSpace"), "sRGB"))
         m_spec.attribute ("Exif:ColorSpace", 1);
 
-    /// check where use progressive compression mode
-    int progressive_jpeg = 0;
-    const ImageIOParameter *progressive = newspec.find_attribute("JpegProgressive", TypeDesc::INT);
-    if (progressive){
-        progressive_jpeg = *(const int*)progressive->data();
-        if (progressive_jpeg == 1){
-            jpeg_simple_progression(&m_cinfo);
-        }
-    }
-    /* TRUE=optimize entropy encoding parms */
-    int optimize_coding = 0; //False
-    const ImageIOParameter *optimize_cod = newspec.find_attribute("OptimizeCoding", TypeDesc::INT);
-    if (optimize_cod){
-        optimize_coding = *(const int*)optimize_cod->data();
-        m_cinfo.optimize_coding = optimize_coding; // TRUE
-    }
+
+
     // Write EXIF info
     std::vector<char> exif;
     // Start the blob with "Exif" and two nulls.  That's how it
