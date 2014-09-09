@@ -527,6 +527,10 @@ encode_xmp_nodes(const char *nodename, const char *xmlnamespace, std::string val
     std::string x;
     if (control == XMP_attribs)
         x = Strutil::format("%s=\"%s\"", nodename, val);
+
+
+
+
     else if (control == XMP_AltList || control == XMP_BagList || control == XMP_SeqList) {
         std::vector<std::string> vals;
         Strutil::split(val, vals, ";");
@@ -610,6 +614,8 @@ const char *xmlnamespace, const char*url){
             const std::string &val(list[li].second);
             int nsid = xmptag[i].xmpnsid;
             const char *xmpname(xmptag[i].xmpname);
+
+
             if (nsid == 4){
                 xmpproperty += encode_xmp_nodes(xmpname, NULL, val, XMP_nodes);
             }
@@ -709,13 +715,13 @@ encode_xmp (const ImageSpec &spec, bool minimal)
     xmp += encode_xmp_properties(list, "Iptc4xmpCore", "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/");
  
 
-    //xmp += encode_xmp_properties(list, "xmpMM", "http://ns.adobe.com/xap/1.0/mm/");
-    xmp += encode_xmp_properties(list, "xmpRights", "http://ns.adobe.com/xap/1.0/rights");
+    xmp += encode_xmp_properties(list, "xmpMM", "http://ns.adobe.com/xap/1.0/mm/");
+    //xmp += encode_xmp_properties(list, "xmpRights", "http://ns.adobe.com/xap/1.0/rights");
     xmp += encode_xmp_properties(list, "dc", "http://purl.org/dc/elements/1.1/");
     //xmp += encode_xmp_properties(list, "exif", "http://ns.adobe.com/exif/1.0/");
 
 
-    xmp += encode_xmp_properties(list, "photoshop", "http://ns.adobe.com/photoshop/1.0/");
+    //xmp += encode_xmp_properties(list, "photoshop", "http://ns.adobe.com/photoshop/1.0/");
 
 
 // FIXME exif xmp stRef stVer stJob xmpDM 

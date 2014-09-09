@@ -364,7 +364,7 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
                 }
                 else{
                     encode_iptc_iim_one_tag (iimtag[i].tag, iimtag[i].name,
-                                             p->type(), p->data(), iptc);
+                                            p->type(), p->data(), iptc);
                 }
 
             }
