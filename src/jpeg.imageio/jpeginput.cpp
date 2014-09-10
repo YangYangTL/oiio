@@ -44,6 +44,7 @@ extern "C" {
 OIIO_PLUGIN_NAMESPACE_BEGIN
 
 
+
 // N.B. The class definition for JpgInput is in jpeg_pvt.h.
 
 
@@ -90,7 +91,8 @@ static void
 my_output_message (j_common_ptr cinfo)
 {
     JpgInput::my_error_ptr myerr = (JpgInput::my_error_ptr) cinfo->err;
-    myerr->jpginput->jpegerror (myerr, true);
+    bool isfatal = false;
+    myerr->jpginput->jpegerror(myerr, isfatal);
 }
 
 
