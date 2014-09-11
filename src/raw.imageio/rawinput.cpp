@@ -32,7 +32,7 @@
 #include "OpenImageIO/fmath.h"
 #include <iostream>
 #include <time.h>       /* time_t, struct tm, gmtime */
-#include <libraw/libraw.h>
+#include <libraw.h>
 
 
 // This plugin utilises LibRaw:
@@ -113,19 +113,36 @@ RawInput::open (const std::string &name, ImageSpec &newspec, ImageSpec &config)
     m_processor.adjust_sizes_info_only();
  
     // Set file information
-    m_spec = ImageSpec(m_processor.imgdata.sizes.iwidth,
+    // Output 16 bit images
+    m_processor.imgdata.params.output_bps = 8;
+
+    if( m_processor.imgdata.params.output_bps==16){
+         m_spec = ImageSpec(m_processor.imgdata.sizes.iwidth,
                        m_processor.imgdata.sizes.iheight,
                        3, // LibRaw should only give us 3 channels
                        TypeDesc::UINT16);
+    }
+    else if(m_processor.imgdata.params.output_bps==8){
+        m_spec = ImageSpec(m_processor.imgdata.sizes.iwidth,
+                           m_processor.imgdata.sizes.iheight,
+                           3, // LibRaw should only give us 3 channels
+                           TypeDesc::UINT8);
+    }
 
-    // Output 16 bit images
-    m_processor.imgdata.params.output_bps = 16;
+
 
     // Set the gamma curve to Linear
-    m_spec.attribute("oiio:ColorSpace","Linear");
-    m_processor.imgdata.params.gamm[0] = 1.0;
-    m_processor.imgdata.params.gamm[1] = 1.0;
 
+    if (m_processor.imgdata.color.profile != NULL&&m_processor.imgdata.color.profile_length != 0){
+        m_processor.imgdata.params.camera_profile = "embed";
+    }
+
+    //m_processor.imgdata.params.camera_profile = "C:\\mobileproject\\build-tmapp-Desktop_Qt_5_3_0_MSVC2013_OpenGL_64bit-Debug\\debug\\Sony\ SLT-A55V.icc";
+    //m_spec.attribute("oiio:ColorSpace","Linear");
+    //m_processor.imgdata.params.gamm[0] = 1.0;
+    //m_processor.imgdata.params.gamm[1] = 1.0;
+    //m_processor.imgdata.params.use_camera_wb = 1;
+    //m_processor.imgdata.params.use_camera_matrix = 1;
     // Check to see if the user has explicitly set the output colorspace primaries
     ImageIOParameter *csp = config.find_attribute ("raw:ColorSpace", TypeDesc::STRING, false);
     if (csp) {
@@ -366,8 +383,11 @@ RawInput::read_native_scanline (int y, int z, void *data)
     if (! m_process) {
         // The user has selected not to apply any debayering.
         // We take the raw data directly
+
         unsigned short *scanline = &((m_processor.imgdata.rawdata.raw_image)[m_spec.width*y]);
         memcpy(data, scanline, m_spec.scanline_bytes(true));
+
+
         return true;
     }
 
@@ -381,9 +401,16 @@ RawInput::read_native_scanline (int y, int z, void *data)
 
     int length = m_spec.width*m_image->colors; // Should always be 3 colors
 
-    // Because we are reading UINT16's, we need to cast m_image->data
-    unsigned short *scanline = &(((unsigned short *)m_image->data)[length*y]);
-    memcpy(data, scanline, m_spec.scanline_bytes(true));
+    if( m_processor.imgdata.params.output_bps == 16){
+        // Because we are reading UINT16's, we need to cast m_image->data
+        unsigned short *scanline = &(((unsigned short *)m_image->data)[length*y]);
+        memcpy(data, scanline, m_spec.scanline_bytes(true));
+    }
+    else{
+        // Because we are reading UINT16's, we need to cast m_image->data
+        unsigned char *scanline = &(((unsigned char *)m_image->data)[length*y]);
+        memcpy(data, scanline, m_spec.scanline_bytes(true));
+    }
 
     return true;
 }
