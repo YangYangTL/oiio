@@ -141,8 +141,8 @@ RawInput::open (const std::string &name, ImageSpec &newspec, ImageSpec &config)
     //m_spec.attribute("oiio:ColorSpace","Linear");
     //m_processor.imgdata.params.gamm[0] = 1.0;
     //m_processor.imgdata.params.gamm[1] = 1.0;
-    //m_processor.imgdata.params.use_camera_wb = 1;
-    //m_processor.imgdata.params.use_camera_matrix = 1;
+    m_processor.imgdata.params.use_camera_wb = 1;
+    m_processor.imgdata.params.use_auto_wb = 0;
     // Check to see if the user has explicitly set the output colorspace primaries
     ImageIOParameter *csp = config.find_attribute ("raw:ColorSpace", TypeDesc::STRING, false);
     if (csp) {
