@@ -722,7 +722,7 @@ encode_xmp (const ImageSpec &spec, bool minimal)
 
 
     //xmp += encode_xmp_properties(list, "photoshop", "http://ns.adobe.com/photoshop/1.0/");
-
+    
 
 // FIXME exif xmp stRef stVer stJob xmpDM 
 
