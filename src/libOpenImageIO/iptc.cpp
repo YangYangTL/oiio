@@ -375,13 +375,13 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
                 //std::cerr<< "Found IPTC with another name:" << iimtag[i].name << " "<<p->type()<<"\n";
                 //const char *s = *(const char **)p->data();
                 //std::cerr << s << "\n";
-                if (Strutil::istarts_with(iimtag[i].name, "IPTC:OriginatingProgram")){
+                /*if (Strutil::istarts_with(iimtag[i].name, "IPTC:OriginatingProgram")){
                     // ignore it, in Raw file, this tag will cause PS to show error message
                 }
                 else{
                     encode_iptc_iim_one_tag(iimtag[i].tag, iimtag[i].anothername,
                         p->type(), p->data(), iptc);
-                }
+                }*/
             }
         }
     }
