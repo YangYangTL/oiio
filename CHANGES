@@ -27,8 +27,21 @@ Major new features and improvements:
      #932 (1.5.3)
    * warp() transforms an image by a 3x3 matrix. #932 (1.5.3)
    * median_filter performs a median filter. (1.5.4)
+* Significant internal speedups by utilizing SIMD instructions (SSE) in
+  the TextureSystem (1.5.5 / #948). To use this to its fullest extent,
+  build OIIO with the make/cmake option USE_SIMD=arch, where arch is
+  sse2, sse3, sse4.1, sse4.2, depending on what machines you'll be
+  deploying to. (Note that x86_64 automatically implies at least sse2.)
+  (1.5.5)
 
 Public API changes:
+* TextureSystem API calls have been modified: the nchannels, dresultds,
+  dresultdt fields have been removed from TextureOpt and are now passed
+  explicitly as arguments to texture(), environment(), and texture3d().
+  Some long-deprecated methods of TextureSystem have been removed, and
+  also some new API calls have been added that provide multi-point
+  texturing given a TextureHandle/PerThread rather than a ustring
+  filename.  (1.5.5) (#948)
 * New filters available to direct users of filter.{h,cpp} and for
   ImageBufAlgo, oiiotoo, and maketx: "cubic", "keys", "simon", "rifman".
   (1.5.0/1.4.9) (#874)
@@ -37,6 +50,7 @@ Public API changes:
 * The Python ImageBuf class did not expose an equivalent to the C++
   ImageBuf::get_pixels. This is exposed now. #931 (1.5.3)
 * The Filter API now uses string_view. (1.5.3)
+* ImageBuf and ImageBufAlgo now use string_view extensively. (1.5.4)
 
 Fixes, minor enhancements, and performance improvements:
 * ImageBufAlgo:
@@ -85,6 +99,8 @@ Fixes, minor enhancements, and performance improvements:
    * maketx --attrib, --sattrib, and --sansattrib now work like
      oiiotool; in other words, you can use command line arguments to add
      or alter metadata in the process of creating a texture. #901 (1.5.1)
+   * Experimental feature: maketx --sharpen <AMT> adds slight sharpening
+     and emphasis of higher frequencies when creating MIP-maps. #958 (1.5.5)
 * OpenEXR:
    * Improve the quality of lossy b44 compression by more correctly
      using the pLinear value of channels (we were incorrectly using the
@@ -99,6 +115,8 @@ Fixes, minor enhancements, and performance improvements:
      "layers".  #904 (1.5.1/1.4.11)
    * Fixed issue where a stringvec of 16 items was mishandled as a
      matrix. #929 (1.5.3/1.4.13)
+   * OpenEXR 2.2 support, including the new DWAA/DWAB compression modes.
+     (1.5.4)
 * JPEG:
    * Fix broken recognition of .jfi extension. (#876)
    * Read and write ICC profiles as attribute "ICCProfile". (#911)
@@ -110,6 +128,9 @@ Fixes, minor enhancements, and performance improvements:
    * Read and write ICC profiles as attribute "ICCProfile". (#911)
    * Graceful handling of output of images with negative data window
      origin. (1.5.3)
+   * Improved precision when auto-premultiplying 8 bit unassociated alpha
+     images (if the user is reading them into a higher-precision buffer).
+     #960, #962 (1.6.2)
 * RAW: Fix for portrait-orientation image reads. (#878) (1.5.1/1.4.10)
 * RLA: Fix bug that caused RLA output to not respect requests for 10 bit
   output (would force it to 16 in that case). #899 (1.5.1)
@@ -127,6 +148,8 @@ Fixes, minor enhancements, and performance improvements:
   #902 (1.5.1/1.4.11)
 * Python: ImageBuf.get_pixels() is now implemented, was previously omitted.
   (1.5.2)
+* TextureSystem: anisotropic texture lookups are slightly sped up (~7%)
+  by using some approximate math (but not visibly different) #953. (1.5.5)
 
 Build/test system improvements:
 * Fix several compiler warnings and build breakages for a variety of
@@ -165,6 +188,9 @@ Build/test system improvements:
   building with USE_LIBCPLUSPLUS=1 tries to link with libc++ if you are
   using clang. (1.5.2)
 * Fixes for Boost Filesystem 1.46-1.49. (1.5.2/1.4.12)
+* testtex new options: --nchannels (forces num channels to look up, rather
+  than always doing what's in the file), --derivs (force the kind of texture
+  calls that return derivs of the texture lookups. (1.5.4)
 
 Developer goodies / internals:
 * New Strutil string comparison functions: starts_with, ends_with.
@@ -177,7 +203,20 @@ Developer goodies / internals:
 * thread.h: add atomic_exchange() function. #898 (1.5.1/1.4.11)
 * Improved error propagation through ImageCache, ImageBuf, and oiiotool.
   (1.5.1)
-
+* Moved certain platform-dependent macros from sysutil.h to platform.h
+  (1.5.4)
+* ustring: add comparisons between ustrings versus char* and string_view.
+  (1.5.4)
+* New simd.h exposes float4, int4, and mask4 classes that utilize SSE
+  instructions for big speedups. (1.5.5 / #948, #954, #955)
+* Big reorganization of fmath.h, moved stuff around, organized, added lots
+  of safe_blah() functions that clamp to valid ranges and fast_blah()
+  functions that are approximations that may differ slightly several
+  decimal places in but are much faster than the full precision libm/IEEE
+  versions. #953, #956 (1.5.5)
+* New utility function: premult(), which can premultiply non-alpha, non-z
+  channels by alpha, for a whole buffer (with strides, any data type).
+  #962 (1.6.2)
 
 
 
