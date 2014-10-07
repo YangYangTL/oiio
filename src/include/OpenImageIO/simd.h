@@ -46,7 +46,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #if (defined(__SSE2__) || (_MSC_VER >= 1300 && !_M_CEE_PURE)) && !defined(OIIO_NO_SSE)
 #  include <xmmintrin.h>
 #  include <emmintrin.h>
-#  if defined(__SSE3__)
+#  if defined(__SSE3__) || defined(__SSSE3__)
 #    include <pmmintrin.h>
 #    include <tmmintrin.h>
 #  endif
@@ -55,8 +55,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #  endif
 #  if (defined(__SSE4_1__) || defined(__SSE4_2__))
 #    define OIIO_SIMD_SSE 4
-#  elif defined(__SSE3__)
+      /* N.B. We consider both SSE4.1 and SSE4.2 to be "4". There are a few
+       * instructions specific to 4.2, but they are all related to string
+       * comparisons and CRCs, which don't currently seem relevant to OIIO,
+       * so for simplicity, we sweep this difference under the rug.
+       */
+#  elif defined(__SSSE3__)
 #    define OIIO_SIMD_SSE 3
+     /* N.B. We only use OIIO_SIMD_SSE = 3 when fully at SSSE3. In theory,
+      * there are a few older architectures that are SSE3 but not SSSE3,
+      * and this simplification means that these particular old platforms
+      * will only get SSE2 goodness out of our code. So be it. Anybody who
+      * cares about performance is probably using a 64 bit machine that's
+      * SSE 4.x or AVX by now.
+      */
 #  else
 #    define OIIO_SIMD_SSE 2
 #  endif
@@ -359,7 +371,7 @@ public:
     /// Logical "or" component-by-component
     friend OIIO_FORCEINLINE mask4 operator| (mask4 a, mask4 b) {
 #if defined(OIIO_SIMD_SSE)
-        return _mm_or_si128 (a.m_vec, b.m_vec);
+        return _mm_or_ps (a.m_vec, b.m_vec);
 #else
         return mask4 (a.m_val[0] | b.m_val[0],
                       a.m_val[1] | b.m_val[1],
@@ -374,7 +386,7 @@ public:
     /// Equality comparison, component by component
     friend OIIO_FORCEINLINE const mask4 operator== (mask4 a, mask4 b) {
 #if defined(OIIO_SIMD_SSE)
-        return _mm_castsi128_ps (_mm_cmpeq_epi32 (a.m_vec, b.m_vec));
+        return _mm_castsi128_ps (_mm_cmpeq_epi32 (_mm_castps_si128 (a.m_vec), _mm_castps_si128(b.m_vec)));
 #else
         return mask4 (a[0] == b[0],
                       a[1] == b[1],
@@ -661,7 +673,7 @@ public:
         return *this;
     }
 
-    OIIO_FORCEINLINE int4 operator- () {
+    OIIO_FORCEINLINE int4 operator- () const {
 #if defined(OIIO_SIMD_SSE)
         return _mm_sub_epi32 (_mm_setzero_si128(), m_vec);
 #else
@@ -1021,10 +1033,10 @@ OIIO_FORCEINLINE int reduce_or (int4 v) {
 OIIO_FORCEINLINE int4 blend (int4 a, int4 b, mask4 mask)
 {
 #if defined(OIIO_SIMD_SSE) && OIIO_SIMD_SSE >= 4 /* SSE >= 4.1 */
-    return _mm_blendv_epi8 (a.simd(), b.simd(), mask);
+    return _mm_blendv_epi8 (a.simd(), b.simd(), _mm_castps_si128(mask));
 #elif defined(OIIO_SIMD_SSE) /* SSE2 */
-    return _mm_or_si128 (_mm_and_si128(mask, b.simd()),
-                         _mm_andnot_si128(mask.simd(), a.simd()));
+    return _mm_or_si128 (_mm_and_si128(_mm_castps_si128(mask.simd()), b.simd()),
+                         _mm_andnot_si128(_mm_castps_si128(mask.simd()), a.simd()));
 #else
     return int4 (mask[0] ? b[0] : a[0],
                  mask[1] ? b[1] : a[1],
@@ -1040,7 +1052,7 @@ OIIO_FORCEINLINE int4 blend (int4 a, int4 b, mask4 mask)
 OIIO_FORCEINLINE int4 blend0 (int4 a, mask4 mask)
 {
 #if defined(OIIO_SIMD_SSE)
-    return _mm_and_si128(mask, a.simd());
+    return _mm_and_si128(_mm_castps_si128(mask), a.simd());
 #else
     return int4 (mask[0] & a[0],
                  mask[1] & a[1],
@@ -1054,7 +1066,7 @@ OIIO_FORCEINLINE int4 blend0 (int4 a, mask4 mask)
 /// Per-element absolute value.
 OIIO_FORCEINLINE int4 abs (int4 a)
 {
-#if defined(OIIO_SIMD_SSE)
+#if defined(OIIO_SIMD_SSE) && OIIO_SIMD_SSE >= 3
     return _mm_abs_epi32(a.simd());
 #else
     return int4 (std::abs(a[0]), std::abs(a[1]), std::abs(a[2]), std::abs(a[3]));
@@ -1309,7 +1321,7 @@ public:
         return *this;
     }
 
-    OIIO_FORCEINLINE float4 operator- () {
+    OIIO_FORCEINLINE float4 operator- () const {
 #if defined(OIIO_SIMD_SSE)
         return _mm_sub_ps (_mm_setzero_ps(), m_vec);
 #else
