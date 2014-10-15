@@ -547,7 +547,13 @@ public:
     }
 
     /// Return an int4 with all components set to 0
-    static OIIO_FORCEINLINE const int4 Zero () { return int4(0); }
+    static OIIO_FORCEINLINE const int4 Zero () {
+#if defined(OIIO_SIMD_SSE)
+        return _mm_setzero_si128();
+#else
+        return int4(0);
+#endif
+    }
 
     /// Return an int4 with all components set to 1
     static OIIO_FORCEINLINE const int4 One () { return int4(1); }
@@ -1113,6 +1119,8 @@ public:
     /// simd_t is the native SIMD type used
 #if defined(OIIO_SIMD_SSE)
     typedef __m128   simd_t;
+#else
+    typedef float    simd_t[4];
 #endif
 
     /// Default constructor (contents undefined)
@@ -1192,7 +1200,13 @@ public:
     }
 
     /// Return a float4 with all components set to 0.0
-    static OIIO_FORCEINLINE const float4 Zero () { return float4(0.0f); }
+    static OIIO_FORCEINLINE const float4 Zero () {
+#if defined(OIIO_SIMD_SSE)
+        return _mm_setzero_ps();
+#else
+        return float4(0.0f);
+#endif
+    }
 
     /// Return a float4 with all components set to 1.0
     static OIIO_FORCEINLINE const float4 One () { return float4(1.0f); }
