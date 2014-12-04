@@ -549,6 +549,12 @@ read_exif_tag (ImageSpec &spec, const TIFFDirEntry *dirp,
         std::cerr << "exifid has type " << dir.tdir_type << ", offset " << dir.tdir_offset << "\n";
         std::cerr << "EXIF Number of directory entries = " << ndirs << "\n";
 #endif
+        if (dir.tdir_tag == TIFFTAG_GPSIFD && ndirs > 32) {
+#if DEBUG_EXIF_READ
+            std::cerr << "Bad GPS data\n";
+#endif
+            return;
+        }
         for (int d = 0;  d < ndirs;  ++d)
             read_exif_tag (spec, (const TIFFDirEntry *)(ifd+2+d*sizeof(TIFFDirEntry)),
                            (const char *)buf, swab, ifd_offsets_seen, 
