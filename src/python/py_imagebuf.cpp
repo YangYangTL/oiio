@@ -68,6 +68,13 @@ ImageBuf_reset_name2 (ImageBuf &buf, const std::string &name,
 }
 
 void
+ImageBuf_reset_name_config (ImageBuf &buf, const std::string &name,
+                      int subimage, int miplevel, const ImageSpec &config)
+{
+    buf.reset (name, subimage, miplevel, NULL, &config);
+}
+
+void
 ImageBuf_reset_spec (ImageBuf &buf, const ImageSpec &spec)
 {
     buf.reset (spec);
@@ -79,6 +86,7 @@ bool
 ImageBuf_read (ImageBuf &buf, int subimage=0, int miplevel=0,
                bool force=false, TypeDesc convert=TypeDesc::UNKNOWN)
 {
+    ScopedGILRelease gil;
     return buf.read (subimage, miplevel, force, convert);
 }
 
@@ -88,6 +96,7 @@ ImageBuf_read2 (ImageBuf &buf, int subimage=0, int miplevel=0,
                 bool force=false,
                 TypeDesc::BASETYPE convert=TypeDesc::UNKNOWN)
 {
+    ScopedGILRelease gil;
     return buf.read (subimage, miplevel, force, convert);
 }
 
@@ -102,6 +111,7 @@ bool
 ImageBuf_write (const ImageBuf &buf, const std::string &filename,
                 const std::string &fileformat="")
 {
+    ScopedGILRelease gil;
     return buf.write (filename, fileformat);
 }
 
@@ -110,11 +120,45 @@ BOOST_PYTHON_FUNCTION_OVERLOADS(ImageBuf_write_overloads,
                                 ImageBuf_write, 2, 3)
 
 
+bool
+ImageBuf_make_writeable (ImageBuf &buf, bool keep_cache_type)
+{
+    ScopedGILRelease gil;
+    return buf.make_writeable (keep_cache_type);
+}
+
+
+
 void
 ImageBuf_set_write_format (ImageBuf &buf, TypeDesc::BASETYPE format)
 {
     buf.set_write_format (format);
 }
+
+
+
+bool
+ImageBuf_copy (ImageBuf &buf, const ImageBuf &src,
+               TypeDesc format = TypeDesc::UNKNOWN)
+{
+    ScopedGILRelease gil;
+    return buf.copy (src, format);
+}
+
+
+bool
+ImageBuf_copy2 (ImageBuf &buf, const ImageBuf &src,
+                TypeDesc::BASETYPE format = TypeDesc::UNKNOWN)
+{
+    ScopedGILRelease gil;
+    return buf.copy (src, format);
+}
+
+
+BOOST_PYTHON_FUNCTION_OVERLOADS(ImageBuf_copy_overloads,
+                                ImageBuf_copy, 2, 3)
+BOOST_PYTHON_FUNCTION_OVERLOADS(ImageBuf_copy2_overloads,
+                                ImageBuf_copy2, 2, 3)
 
 
 
@@ -192,20 +236,37 @@ BOOST_PYTHON_FUNCTION_OVERLOADS(ImageBuf_interppixel_NDC_overloads,
 
 
 object
-ImageBuf_interppixel_NDC_full (const ImageBuf &buf, float x, float y,
-                               ImageBuf::WrapMode wrap = ImageBuf::WrapBlack)
+ImageBuf_interppixel_bicubic (const ImageBuf &buf, float x, float y,
+                              ImageBuf::WrapMode wrap = ImageBuf::WrapBlack)
 {
     int nchans = buf.nchannels();
     float *pixel = ALLOCA (float, nchans);
-    buf.interppixel_NDC_full (x, y, pixel, wrap);
+    buf.interppixel_bicubic (x, y, pixel, wrap);
     PyObject *result = PyTuple_New (nchans);
     for (int i = 0;  i < nchans;  ++i)
         PyTuple_SetItem (result, i, PyFloat_FromDouble(pixel[i]));
     return object(handle<>(result));
 }
 
-BOOST_PYTHON_FUNCTION_OVERLOADS(ImageBuf_interppixel_NDC_full_overloads,
-                                ImageBuf_interppixel_NDC_full, 3, 4)
+BOOST_PYTHON_FUNCTION_OVERLOADS(ImageBuf_interppixel_bicubic_overloads,
+                                ImageBuf_interppixel_bicubic, 3, 4)
+
+
+object
+ImageBuf_interppixel_bicubic_NDC (const ImageBuf &buf, float x, float y,
+                              ImageBuf::WrapMode wrap = ImageBuf::WrapBlack)
+{
+    int nchans = buf.nchannels();
+    float *pixel = ALLOCA (float, nchans);
+    buf.interppixel_bicubic_NDC (x, y, pixel, wrap);
+    PyObject *result = PyTuple_New (nchans);
+    for (int i = 0;  i < nchans;  ++i)
+        PyTuple_SetItem (result, i, PyFloat_FromDouble(pixel[i]));
+    return object(handle<>(result));
+}
+
+BOOST_PYTHON_FUNCTION_OVERLOADS(ImageBuf_interppixel_bicubic_NDC_overloads,
+                                ImageBuf_interppixel_bicubic_NDC, 3, 4)
 
 
 
@@ -288,6 +349,7 @@ void declare_imagebuf()
         .def("clear", &ImageBuf::clear)
         .def("reset", &ImageBuf_reset_name)
         .def("reset", &ImageBuf_reset_name2)
+        .def("reset", &ImageBuf_reset_name_config)
         .def("reset", &ImageBuf_reset_spec)
         .add_property ("initialized", &ImageBuf::initialized)
         .def("init_spec", &ImageBuf::init_spec)
@@ -298,7 +360,8 @@ void declare_imagebuf()
         .def("write", &ImageBuf_write,
              ImageBuf_write_overloads())
         // FIXME -- write(ImageOut&)
-//        .def("set_write_format", &ImageBuf::set_write_format)
+        .def("make_writeable", &ImageBuf_make_writeable,
+             (arg("keep_cache_type")=false))
         .def("set_write_format", &ImageBuf_set_write_format)
         .def("set_write_tiles", &ImageBuf::set_write_tiles,
              (arg("width")=0, arg("height")=0, arg("depth")=0))
@@ -351,7 +414,10 @@ void declare_imagebuf()
 
         .def("copy_metadata", &ImageBuf::copy_metadata)
         .def("copy_pixels", &ImageBuf::copy_pixels)
-        .def("copy", &ImageBuf::copy)
+        .def("copy",  &ImageBuf_copy,
+             ImageBuf_copy_overloads())
+        .def("copy",  &ImageBuf_copy2,
+             ImageBuf_copy2_overloads())
         .def("swap", &ImageBuf::swap)
 
         .def("getchannel", &ImageBuf_getchannel,
@@ -362,8 +428,12 @@ void declare_imagebuf()
              ImageBuf_interppixel_overloads())
         .def("interppixel_NDC", &ImageBuf_interppixel_NDC,
              ImageBuf_interppixel_NDC_overloads())
-        .def("interppixel_NDC_full", &ImageBuf_interppixel_NDC_full,
-             ImageBuf_interppixel_NDC_full_overloads())
+        .def("interppixel_NDC_full", &ImageBuf_interppixel_NDC,
+             ImageBuf_interppixel_NDC_overloads())
+        .def("interppixel_bicubic", &ImageBuf_interppixel_bicubic,
+             ImageBuf_interppixel_bicubic_overloads())
+        .def("interppixel_bicubic_NDC", &ImageBuf_interppixel_bicubic_NDC,
+             ImageBuf_interppixel_bicubic_NDC_overloads())
         .def("setpixel", &ImageBuf_setpixel)
         .def("setpixel", &ImageBuf_setpixel2)
         .def("setpixel", &ImageBuf_setpixel1)

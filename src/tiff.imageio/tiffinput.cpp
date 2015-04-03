@@ -33,6 +33,8 @@
 #include <cstdlib>
 #include <cmath>
 
+#include <boost/regex.hpp>
+
 #include <tiffio.h>
 
 #include "OpenImageIO/dassert.h"
@@ -94,6 +96,11 @@ public:
     virtual ~TIFFInput ();
     virtual const char * format_name (void) const { return "tiff"; }
     virtual bool valid_file (const std::string &filename) const;
+    virtual int supports (string_view feature) const {
+        return (feature == "exif"
+             || feature == "iptc");
+        // N.B. No support for arbitrary metadata.
+    }
     virtual bool open (const std::string &name, ImageSpec &newspec);
     virtual bool open (const std::string &name, ImageSpec &newspec,
                        const ImageSpec &config);
@@ -134,6 +141,7 @@ private:
                                      ///  try to keep it that way!
     bool m_convert_alpha;            ///< Do we need to associate alpha?
     bool m_separate;                 ///< Separate planarconfig?
+    bool m_testopenconfig;           ///< Debug aid to test open-with-config
     unsigned short m_planarconfig;   ///< Planar config of the file
     unsigned short m_bitspersample;  ///< Of the *file*, not the client's view
     unsigned short m_photometric;    ///< Of the *file*, not the client's view
@@ -147,6 +155,7 @@ private:
         m_keep_unassociated_alpha = false;
         m_convert_alpha = false;
         m_separate = false;
+        m_testopenconfig = false;
         m_colormap.clear();
     }
 
@@ -410,6 +419,11 @@ TIFFInput::open (const std::string &name, ImageSpec &newspec,
     // Check 'config' for any special requests
     if (config.get_int_attribute("oiio:UnassociatedAlpha", 0) == 1)
         m_keep_unassociated_alpha = true;
+    // This configuration hint has no function other than as a debugging aid
+    // for testing whether configurations are received properly from other
+    // OIIO components.
+    if (config.get_int_attribute("oiio:DebugOpenConfig!", 0))
+        m_testopenconfig = true;
     return open (name, newspec);
 }
 
@@ -765,6 +779,10 @@ TIFFInput::readspec (bool read_meta)
     case RESUNIT_INCH : m_spec.attribute ("ResolutionUnit", "in"); break;
     case RESUNIT_CENTIMETER : m_spec.attribute ("ResolutionUnit", "cm"); break;
     }
+    float xdensity = m_spec.get_float_attribute ("XResolution", 0.0f);
+    float ydensity = m_spec.get_float_attribute ("YResolution", 0.0f);
+    if (xdensity && ydensity)
+        m_spec.attribute ("PixelAspectRatio", ydensity/xdensity);
 
     get_matrix_attribute ("worldtocamera", TIFFTAG_PIXAR_MATRIX_WORLDTOCAMERA);
     get_matrix_attribute ("worldtoscreen", TIFFTAG_PIXAR_MATRIX_WORLDTOSCREEN);
@@ -911,6 +929,57 @@ TIFFInput::readspec (bool read_meta)
         }
     }
 #endif
+
+    // Because TIFF doesn't support arbitrary metadata, we look for certain
+    // hints in the ImageDescription and turn them into metadata.
+    std::string desc = m_spec.get_string_attribute ("ImageDescription");
+    bool updatedDesc = false;
+    static const char *fp_number_pattern =
+            "([+-]?((?:(?:[[:digit:]]*\\.)?[[:digit:]]+(?:[eE][+-]?[[:digit:]]+)?)))";
+    size_t found;
+    found = desc.rfind ("oiio:ConstantColor=");
+    if (found != std::string::npos) {
+        size_t begin = desc.find_first_of ('=', found) + 1;
+        size_t end = desc.find_first_of (' ', begin);
+        string_view s = string_view (desc.data()+begin, end-begin);
+        m_spec.attribute ("oiio:ConstantColor", s);
+        const std::string constcolor_pattern =
+            std::string ("oiio:ConstantColor=(\\[?") + fp_number_pattern + ",?)+\\]?[ ]*";
+        desc = boost::regex_replace (desc, boost::regex(constcolor_pattern), "");
+        updatedDesc = true;
+    }
+    found = desc.rfind ("oiio:AverageColor=");
+    if (found != std::string::npos) {
+        size_t begin = desc.find_first_of ('=', found) + 1;
+        size_t end = desc.find_first_of (' ', begin);
+        string_view s = string_view (desc.data()+begin, end-begin);
+        m_spec.attribute ("oiio:AverageColor", s);
+        const std::string average_pattern =
+            std::string ("oiio:AverageColor=(\\[?") + fp_number_pattern + ",?)+\\]?[ ]*";
+        desc = boost::regex_replace (desc, boost::regex(average_pattern), "");
+        updatedDesc = true;
+    }
+    found = desc.rfind ("oiio:SHA-1=");
+    if (found == std::string::npos)  // back compatibility with < 1.5
+        found = desc.rfind ("SHA-1=");
+    if (found != std::string::npos) {
+        size_t begin = desc.find_first_of ('=', found) + 1;
+        size_t end = begin+40;
+        string_view s = string_view (desc.data()+begin, end-begin);
+        m_spec.attribute ("oiio:SHA-1", s);
+        desc = boost::regex_replace (desc, boost::regex("oiio:SHA-1=[[:xdigit:]]*[ ]*"), "");
+        desc = boost::regex_replace (desc, boost::regex("SHA-1=[[:xdigit:]]*[ ]*"), "");
+        updatedDesc = true;
+    }
+    if (updatedDesc) {
+        if (desc.size())
+            m_spec.attribute ("ImageDescription", desc);
+        else
+            m_spec.erase_attribute ("ImageDescription");
+    }
+
+    if (m_testopenconfig)  // open-with-config debugging
+        m_spec.attribute ("oiio:DebugOpenConfig!", 42);
 }
 
 

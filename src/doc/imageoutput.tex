@@ -27,7 +27,7 @@ to a file:
         out->open (filename, spec);
         out->write_image (TypeDesc::UINT8, pixels);
         out->close ();
-        delete out;
+        ImageOutput::destroy (out);
 \end{code}
 
 \noindent This little bit of code does a surprising amount of useful work:  
@@ -62,10 +62,46 @@ to a file:
   the plugin.
   \begin{code}
         out->close ();
-        delete out;
+        ImageOutput::destroy (out);
   \end{code}
 \end{itemize}
 
+\subsection*{What happens when the file format doesn't support the spec?}
+
+The {\cf open()} call will fail (return {\cf false} and set an appropriate
+error message) if the output format cannot accommodate what is requested by
+the \ImageSpec. This includes:
+\begin{itemize}
+\item Dimensions (width, height, or number of channels) exceeding the limits
+  supported by the file format.\footnote{One exception to the rule about
+  number of channels is that a file format that supports only RGB, but not
+  alpha, is permitted to silently drop the alpha channel without considering
+  that to be an error.}
+\item Volumetric (depth $> 1$) if the format does not support volumetric
+  data.
+\item Tile size $>1$ if the format does not support tiles.
+\item Multiple subimages or MIP levels if not supported by the format.
+\end{itemize}
+
+
+However, several other mismatches between requested \ImageSpec and file
+format capabilities will be silently ignored, allowing {\cf open()} to
+succeed:
+
+\begin{itemize}
+\item If the pixel data format is not supported (for example, a request for
+  {\cf half} pixels when writing a JPEG/JFIF file), the format writer
+  may substitute another data format (generally, whichever commonly-used
+  data format supported by the file type will result in the least reduction
+  of precision or range).
+\item If the \ImageSpec requests different per-channel data formats, but
+  the format supports only a single format for all channels, it may just
+  choose the most precise format requested and use it for all channels.
+\item If the file format does not support arbitrarily-named channels, the
+  channel names may be lost when saving the file.
+\item Any other metadata in the \ImageSpec may be summarily dropped if not
+  supported by the file format.
+\end{itemize}
 
 
 \section{Advanced Image Output}
@@ -818,7 +854,7 @@ completed.  Here is an example:
         if (subimages > 1 &&  (! out->supports("multiimage") ||
                                ! out->supports("appendsubimage"))) {
             std::cerr << "Does not support appending of subimages\n";
-            delete out;
+            ImageOutput::destroy (out);
             return;
         }
 
@@ -833,7 +869,7 @@ completed.  Here is an example:
             appendmode = ImageOutput::AppendSubimage;
         }
         out->close ();
-        delete out;
+        ImageOutput::destroy (out);
 \end{code}
 
 
@@ -861,7 +897,7 @@ specification of the subimages at the time you first open the file.
         // Be sure we can support subimages
         if (subimages > 1 && ! out->supports ("multiimage")) {
             std::cerr << "Cannot write multiple subimages\n";
-            delete out;
+            ImageOutput::destroy (out);
             return;
         }
 
@@ -875,7 +911,7 @@ specification of the subimages at the time you first open the file.
             out->write_image (TypeDesc::UINT8, pixels[s]);
         }
         out->close ();
-        delete out;
+        ImageOutput::destroy (out);
 \end{code}
 
 In both of these examples, we have used \writeimage, but of course
@@ -923,7 +959,7 @@ used for texture mapping):
         // Be sure we can support either mipmaps or subimages
         if (! out->supports ("mipmap") && ! out->supports ("multiimage")) {
             std::cerr << "Cannot write a MIP-map\n";
-            delete out;
+            ImageOutput::destroy (out);
             return;
         }
         // Set up spec for the highest resolution
@@ -952,7 +988,7 @@ used for texture mapping):
                 appendmode = ImageOutput::AppendSubimage;
         }
         out->close ();
-        delete out;
+        ImageOutput::destroy (out);
 \end{code}
 
 In this example, we have used \writeimage, but of course \writescanline,
@@ -992,7 +1028,7 @@ a Z channel in {\cf float}:
 
         // Double check that this format accepts per-channel formats
         if (! out->supports("channelformats")) {
-            delete out;
+            ImageOutput::destroy (out);
             return;
         }
 
@@ -1125,7 +1161,7 @@ deep data in a special {\cf DeepData} structure, defined in
     out->open (filename, spec);
     out->write_deep_image (deepdata);
     out->close ();
-    delete out;
+    ImageOutput::destroy (out);
 \end{code}
 
 
@@ -1178,9 +1214,9 @@ without alteration while modifying the image description metadata:
 
     // Clean up
     out->close ();
-    delete out;
+    ImageOutput::destroy (out);
     in->close ();
-    delete in;
+    ImageInput::destroy (in);
 \end{code}
 
 
@@ -1264,25 +1300,25 @@ elaborated with error checking and reporting:
         if (! out->open (filename, spec)) {
             std::cerr << "Could not open " << filename 
                       << ", error = " << out->geterror() << "\n";
-            delete out;
+            ImageOutput::destroy (out);
             return;
         }
 
         if (! out->write_image (TypeDesc::UINT8, pixels)) {
             std::cerr << "Could not write pixels to " << filename 
                       << ", error = " << out->geterror() << "\n";
-            delete out;
+            ImageOutput::destroy (out);
             return;
         }
 
         if (! out->close ()) {
             std::cerr << "Error closing " << filename 
                       << ", error = " << out->geterror() << "\n";
-            delete out;
+            ImageOutput::destroy (out);
             return;
         }
 
-        delete out;
+        ImageOutput::destroy (out);
 \end{code}
 
 
@@ -1299,7 +1335,16 @@ returned, and the plugin that contains its methods) is inferred from the
 extension of the file name.  The {\kw plugin_searchpath} parameter is a
 colon-separated list of directories to search for \product plugin
 DSO/DLL's.
+\apiend
 
+\apiitem{void {\ce destroy} (ImageOutput *Output)}
+\NEW  % 1.6
+Destroy an \ImageOutput that was created by {\cf create()}.
+The {\cf destroy()} method is just a wrapper around operator {\cf delete},
+but by being implemented within the \product DLL, it can ensure that the
+memory deallocation is done in the same DLL arena as where it was originally
+allocated. This is considered safer than a bare {\cf delete} when
+used inside ``plug-ins,'' especially on Windows systems.
 \apiend
 
 \apiitem{const char * {\ce format_name} ()}
@@ -1307,11 +1352,14 @@ Returns the canonical name of the format that this \ImageOutput
 instance is capable of writing.
 \apiend
 
-\apiitem{bool {\ce supports} (const std::string \&feature)}
+\apiitem{int {\ce supports} (string_view feature)}
 \label{sec:supportsfeaturelist}
-Given the name of a \emph{feature}, tells if this \ImageOutput 
-instance supports that feature.  The following features are recognized
-by this query:
+Given the name of a \emph{feature}, tells if this \ImageOutput  instance
+supports that feature.  Most queries will simply return 0 for ``doesn't
+support the feature'' and nonzero for ``supports the feature,'' but it is
+acceptable to have queries return other nonzero integers to indicate varying
+degrees of support or limits (but those queries should be clearly documented
+as such). The following features are recognized by this query:
 \begin{description}
 \item[\spc] \spc 
 \item[\rm \qkw{tiles}] Is this plugin able to write tiled images?
@@ -1332,6 +1380,9 @@ by this query:
   image/subimage (MIP-map levels)?
 \item[\rm \qkw{volumes}] Does this format support ``3D'' pixel arrays
   (a.k.a.\ volume images)?
+\item[\rm \qkw{alpha}] Does this format support an alpha channel?
+\item[\rm \qkw{nchannels}] Does this format support an arbitrary number
+  of channels (beyond RGBA)?
 \item[\rm \qkw{rewrite}] Does this plugin allow the same scanline or
   tile to be sent more than once?  Generally this is true for plugins
   that implement some sort of interactive display, rather than a saved
@@ -1358,6 +1409,14 @@ by this query:
 \item[\rm \qkw{deepdata}] Does the image format allow ``deep'' data
   consisting of multiple values per pixel (and potentially a differing
   number of values from pixel to pixel)?
+\item[\rm \qkw{arbitrary_metadata}] Does the image file format allow
+  metadata with arbitrary names (and either arbitrary, or a reasonable set
+  of, data types)? (Versus the file format supporting only a fixed list of
+  specific metadata names/values?
+\item[\rm \qkw{exif}] Does the image file format support Exif camera data
+  (either specifically, or via arbitrary named metadata)?
+\item[\rm \qkw{iptc}] Does the image file format support IPTC data
+  (either specifically, or via arbitrary named metadata)?
 \end{description}
 
 \noindent This list of queries may be extended in future releases.
@@ -1470,10 +1529,10 @@ Write the tile with $(x,y,z)$ as the upper left corner.  For 2D
 non-volume images, $z$ is ignored.  The three stride values give the
 distance (in bytes) between successive pixels, scanlines, and volumetric
 slices, respectively.  Strides set to the special value {\kw AutoStride}
-imply contiguous data, i.e., \\
-\spc {\kw xstride} $=$ {\kw spec.nchannels*format.size()} \\
-\spc {\kw ystride} $=$ {\kw xstride*spec.tile_width} \\
-\spc {\kw zstride} $=$ {\kw ystride*spec.tile_height} \\
+imply contiguous data in the shape of a full tile, i.e., \\
+\spc {\kw xstride} $=$ {\kw spec.nchannels * format.size()} \\
+\spc {\kw ystride} $=$ {\kw xstride * spec.tile_width} \\
+\spc {\kw zstride} $=$ {\kw ystride * spec.tile_height} \\
 This method automatically converts the
 data from the specified {\kw format} to the actual output format of the
 file. 
@@ -1505,10 +1564,11 @@ to already be in the native format (including per-channel formats, if applicable
 The stride values
 give the data spacing of adjacent pixels, scanlines, and volumetric
 slices, respectively (measured in bytes).  Strides set to the special
-value of {\kw AutoStride} imply contiguous data, i.e., \\
+value of {\kw AutoStride} imply contiguous data in the shape of the
+region specified, i.e., \\
 \spc {\kw xstride} $=$ {\kw spec.nchannels * spec.pixel_size()} \\
-\spc {\kw ystride} $=$ {\kw xstride * (xend-xbegin)} \\
-\spc {\kw zstride} $=$ {\kw ystride * (yend-ybegin)} \\
+\spc {\kw ystride} $=$ {\kw xstride * (xend - xbegin)} \\
+\spc {\kw zstride} $=$ {\kw ystride * (yend - ybegin)} \\
 The data for those tiles is assumed to be in the usual image order, as if
 it were just one big tile, and not ``paded'' to a whole multiple of the tile size.
 

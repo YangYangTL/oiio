@@ -120,6 +120,11 @@ big to make it or what data type it should have.
 \apiend
 
 \apiitem{bool {\ce fill} (ImageBuf \&dst, const float *values, \\
+  \bigspc ROI roi=ROI::All(), int nthreads=0) \\
+bool {\ce fill} (ImageBuf \&dst, const float *top, const float *bottom, \\
+  \bigspc ROI roi=ROI::All(), int nthreads=0) \\
+bool {\ce fill} (ImageBuf \&dst, const float *topleft, const float *topright, \\
+  \bigspc const float *bottomleft, const float *bottomright, \\
   \bigspc ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!fill} \indexapi{fill}
 Set the pixels in the destination image within the specified region
@@ -127,17 +132,25 @@ to the values in {\cf values[]}.  The {\cf
   values} array must point to at least {\cf chend} values, or the
 number of channels in the image, whichever is smaller.
 
+\NEW % 1.6
+Three varieties of {\cf fill()} exist: (a) a single set of channel values that
+will apply to the ROI, (b) two sets of values that will create a linearly
+interpolated gradient from top to bottom of the ROI, (c) four sets of values
+that will be bilnearly interpolated across all four corners of the ROI.
+
 \smallskip
 \noindent Examples:
 \begin{code}
-    // Create a new 640x480 RGB image, fill it with pink
+    // Create a new 640x480 RGB image, fill it with pink, then draw a filled
+    // red rectangle.
     ImageBuf A ("myimage", ImageSpec(640, 480, 3, TypeDesc::FLOAT);
     float pink[3] = { 1, 0.7, 0.7 };
-    ImageBufAlgo::fill (A, pink);
-
-    // Draw a red rectangle
     float red[3] = { 1, 0, 0 };
+    ImageBufAlgo::fill (A, pink);
     ImageBufAlgo::fill (A, red, ROI(50,100, 75, 175));
+
+    // Draw a top-to-bottom gradient from red to pink
+    ImageBufAlgo::fill (A, red, pink);
 \end{code}
 \spc \includegraphics[width=1.25in]{figures/fill.jpg}  \\
 \apiend
@@ -169,10 +182,59 @@ image.
 \apiend
 
 
-\apiitem{bool {\ce render_text} (ImageBuf \&dst, int x, int y, \\
-  \bigspc  string_view text, int fontsize=16, \\
-  \bigspc  string_view fontname="", \\
-  \bigspc  const float *textcolor = NULL)}
+\apiitem{bool {\ce noise} (ImageBuf \&dst, string_view noisetype, \\
+\bigspc\bigspc float A = 0.0f, float B = 0.1f, bool mono = false, \\
+\bigspc\bigspc int seed = 0, ROI roi=ROI::All(), int nthreads=0)}
+\indexapi{noise}
+\NEW % 1.6
+
+Add pseudorandom noise to the specified region of {\cf dst}. For noise
+type \qkw{uniform}, the noise is uniformly distributed on the
+range {\cf [A,B)]}. For noise \qkw{gaussian}, the noise will have a
+normal distribution with mean A and standard deviation B.
+For noise \qkw{salt}, the value A will be stored in a random set of pixels
+whose proportion (of the overall image) is B.
+For all noise types, choosing different {\cf seed} values will result in a
+
+different pattern. If the {\cf mono} flag is {\cf true}, a single noise
+value will be applied to all channels specified by {\cf roi}, but if {\cf
+mono} is {\cf false}, a separate noise value will be computed for each channel in
+the region.
+
+If {\cf dst} is uninitialized, it will be resized to be a {\cf float}
+\ImageBuf large enough to hold the region specified by {\cf roi}. It is an
+error to pass both an uninitialized {\cf dst} and an undefined {\cf roi}.
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    // Create a new 256x256 field of grayscale uniformly distributed noise on [0,1)
+    ImageBuf A (ImageSpec(256, 256, 3, TypeDesc::FLOAT));
+    ImageBufAlgo::zero (A);
+    ImageBufAlgo::noise (A, "uniform", 0.0f /*min*/, 1.0f /*max*/,
+                         true /*mono*/, 1 /*seed*/);
+
+    // Add color Gaussian noise to an existing image
+    ImageBuf B ("tahoe.jpg");
+    ImageBufAlgo::noise (B, "gaussian", 0.0f /*mean*/, 0.1f /*stddev*/,
+                         false /*mono*/, 1 /*seed*/);
+
+    // Use salt and pepper noise to make occasional random dropouts
+    ImageBuf C ("tahoe.jpg");
+    ImageBufAlgo::noise (C, "salt", 0.0f /*value*/, 0.01f /*portion*/,
+                         true /*mono*/, 1 /*seed*/);
+\end{code}
+
+\spc \includegraphics[width=1.25in]{figures/unifnoise1.jpg}
+\spc \includegraphics[width=1.65in]{figures/tahoe-gauss.jpg} 
+\spc \includegraphics[width=1.65in]{figures/tahoe-pepper.jpg}
+
+\apiend
+
+
+\apiitem{bool {\ce render_text} (ImageBuf \&dst, int x, int y, string_view text,\\
+  \bigspc\spc\spc int fontsize=16, string_view fontname="", \\
+  \bigspc\spc\spc  const float *textcolor = NULL)}
 \index{ImageBufAlgo!render_text} \indexapi{render_text}
 Render a text string into the destination, essentially doing an ``over'' of
 the antialiased character into the existing pixel data.  The baseline of the
@@ -366,7 +428,6 @@ the entirety of src will be used.  It will copy into channels
 \apiitem{bool {\ce rotate90} (ImageBuf \&dst, const ImageBuf \&src, \\
         \bigspc  ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!rotate90} \indexapi{rotate90}
-\NEW  % 1.5
 Copy {\cf src} (or a subregion of {\cf src} to the corresponding pixels
 of {\cf dst}, but rotated 90 degrees clockwise.
 
@@ -386,7 +447,6 @@ of {\cf dst}, but rotated 90 degrees clockwise.
 \apiitem{bool {\ce rotate180} (ImageBuf \&dst, const ImageBuf \&src, \\
         \bigspc  ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!rotate180} \indexapi{rotate180}
-\NEW % 1.5
 Copy {\cf src} (or a subregion of {\cf src} to the corresponding pixels
 of {\cf dst}, but rotated 180 degrees.
 
@@ -406,7 +466,6 @@ of {\cf dst}, but rotated 180 degrees.
 \apiitem{bool {\ce rotate270} (ImageBuf \&dst, const ImageBuf \&src, \\
         \bigspc  ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!rotate270} \indexapi{rotate270}
-\NEW % 1.5
 Copy {\cf src} (or a subregion of {\cf src} to the corresponding pixels
 of {\cf dst}, but rotated 270 degrees clockwise (or 90 degrees
 counter-clockwise).
@@ -464,7 +523,6 @@ of {\cf dst}, but with the columns exchanged horizontally.
 \apiitem{bool {\ce reorient} (ImageBuf \&dst, const ImageBuf \&src, \\
         \bigspc  ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!reorient} \indexapi{reorient}
-\NEW % 1.5
 Copy {\cf src} to {\cf dst}, but with whatever seties of rotations, flips,
 or flops are necessary to transform the pixels into the configuration
 suggested by the \qkw{Orientation} metadata of the image (and the
@@ -550,7 +608,6 @@ bool {\ce rotate} (ImageBuf \&dst, const ImageBuf \&src, \\
         \bigspc bool recompute_roi = false, \\
         \bigspc ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!rotate} \indexapi{rotate}
-\NEW % 1.5
 
 Rotate the {\cf src} image by the {\cf angle} (in radians, with positive
 angles clockwise). When {\cf center_x} and {\cf center_y} are supplied, they
@@ -597,7 +654,6 @@ bool {\ce warp} (ImageBuf \&dst, const ImageBuf \&src, \\
         \bigspc ImageBuf::WrapMode wrap = ImageBuf::WrapDefault, \\
         \bigspc ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!warp} \indexapi{warp}
-\NEW % 1.5
 
 Warp the {\cf src} image using the supplied 3x3 transformation matrix {\cf M}.
 
@@ -746,6 +802,51 @@ have the same number of channels.
 \apiend
 
 
+\apiitem{bool {\ce absdiff} (ImageBuf \&dst, const ImageBuf \&A, const ImageBuf \&B, \\
+        \bigspc  ROI roi=ROI::All(), int nthreads=0) \\
+bool {\ce absdiff} (ImageBuf \&dst, const ImageBuf \&A, float B, \\
+        \bigspc ROI roi=ROI::All(), int nthreads=0) \\
+bool {\ce absdiff} (ImageBuf \&dst, const ImageBuf \&A, const float *B, \\
+        \bigspc ROI roi=ROI::All(), int nthreads=0)}
+\index{ImageBufAlgo!absdiff} \indexapi{absdiff}
+\NEW % 1.6
+
+For all pixels within the designated region, compute the absolute value of
+the difference between the corresponding pixels of {\cf A} from {\cf B},
+putting the results into {\cf dst}. {\cf A} is an \ImageBuf.  {\cf B} may be
+an \ImageBuf (with the same number of channels as {\cf A}), or an array of
+floats (one per channel, for each channel of {\cf A}), or a single float
+(same value for all channels).
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    ImageBuf A ("a.exr");
+    ImageBuf B ("b.exr");
+    ImageBuf Difference;
+    ImageBufAlgo::absdiff (Difference, A, B);
+\end{code}
+\apiend
+
+
+\apiitem{bool {\ce abs} (ImageBuf \&dst, const ImageBuf \&A, \\
+        \bigspc  ROI roi=ROI::All(), int nthreads=0)}
+\index{ImageBufAlgo!abs} \indexapi{abs}
+\NEW % 1.6
+
+For all pixels within the designated region, compute the absolute value of
+the corresponding pixels of {\cf A}, putting the results into {\cf dst}.
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    ImageBuf A ("a.exr");
+    ImageBuf Abs;
+    ImageBufAlgo::abs (Abs, A);
+\end{code}
+\apiend
+
+
 
 \apiitem{bool {\ce mul} (ImageBuf \&dst, const ImageBuf \&A, const ImageBuf \&B, \\
         \bigspc  ROI roi=ROI::All(), int nthreads=0) \\
@@ -773,6 +874,38 @@ All of the images must have the same number of channels.
     ROI roi = get_roi (A.spec());
     roi.chbegin = 0;  roi.chend = 3;
     ImageBufAlgo::mul (A, A, 0.5, roi);
+\end{code}
+\apiend
+
+
+\apiitem{bool {\ce div} (ImageBuf \&dst, const ImageBuf \&A, const ImageBuf \&B, \\
+        \bigspc  ROI roi=ROI::All(), int nthreads=0) \\
+bool {\ce div} (ImageBuf \&dst, const ImageBuf \&A, float B, \\
+        \bigspc ROI roi=ROI::All(), int nthreads=0) \\
+bool {\ce div} (ImageBuf \&dst, const ImageBuf \&A, const float *B, \\
+        \bigspc ROI roi=ROI::All(), int nthreads=0)}
+\index{ImageBufAlgo!div} \indexapi{div}
+\NEW %1.6
+
+For all pixels within the designated region, divide the pixel values
+of image {\cf A} by {\cf B} (channel by channel), putting the result in
+{\cf dst}.  {\cf B} is either an image,
+a float (added to all channels) or a per-channel float array.
+All of the images must have the same number of channels.
+Division by zero is definied to result in zero.
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    ImageBuf A ("a.exr");
+    ImageBuf B ("b.exr");
+    ImageBuf Result;
+    ImageBufAlgo::div (Result, A, B);
+
+    // Reduce intensity of A's channels 0-2 by 50%
+    ROI roi = get_roi (A.spec());
+    roi.chbegin = 0;  roi.chend = 3;
+    ImageBufAlgo::div (A, A, 2.0f, roi);
 \end{code}
 \apiend
 
@@ -1365,6 +1498,12 @@ convolution, otherwise the original values will be used.
     ImageBuf Blurred;
     ImageBufAlgo::convolve (Blurred, Src, K);
 \end{code}
+
+\spc \begin{tabular}{lll}
+\includegraphics[width=1.5in]{figures/tahoe-small.jpg} &
+\includegraphics[width=1.5in]{figures/tahoe-blur.jpg} \\
+original & blurred \\
+\end{tabular}
 \apiend
 
 \apiitem{bool {\ce fft} (ImageBuf \&dst, const ImageBuf \&src, \\
@@ -1507,11 +1646,10 @@ of src was < 1, dst will have a pixel color that is a plausible
 
 
 \apiitem{bool {\ce median_filter} (ImageBuf \&dst, const ImageBuf \&src, \\
-  \bigspc\spc int width = 3, int height = -1,
+  \bigspc\spc int width = 3, int height = -1, \\
   \bigspc\spc  ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!median_filter} \indexapi{median_filter}
 
-\NEW % 1.5
 Replace the given ROI of {\cf dst} with a median-filtered version of the
 corresponding region of {\cf src}.  The median filter replaces each pixel
 with the median value underneath the $\mathit{width} \times \mathit{height}$
@@ -1528,7 +1666,13 @@ preserving the sharpness of long edges.
     ImageBufAlgo::median_filter (Clean, Noisy, 3, 3);
 \end{code}
 
-%FIXME - example would be good here
+\spc \begin{tabular}{lll}
+\includegraphics[width=1.5in]{figures/tahoe-small.jpg} &
+\includegraphics[width=1.5in]{figures/tahoe-pepper.jpg} &
+\includegraphics[width=1.5in]{figures/tahoe-pepper-median.jpg} \\
+original & with dropouts & median filtered \\
+\end{tabular}
+
 \apiend
 
 
@@ -1537,7 +1681,7 @@ preserving the sharpness of long edges.
   \bigspc\spc float contrast = 1.0f, float threshold = 0.0f, \\
   \bigspc\spc  ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!unsharp_mask} \indexapi{unsharp_mask}
-\label{sec:IBA_unsharp_mask}
+\label{sec:iba:unsharpmask}
 
 Replace the given ROI of {\cf dst} with a sharpened version of the
 corresponding region of {\cf src} using the ``unsharp mask'' technique.
@@ -1810,7 +1954,7 @@ created.  The full list of supported configuration options is:
                           If nonzero, change RGB images which have
                              R==G==B everywhere to single-channel
                              grayscale (default: 0). \\
-   maketx:opaquedetect & int &
+   maketx:opaque_detect & int &
                           If nonzero, drop the alpha channel if alpha
                              is 1.0 in all pixels (default: 0). \\
    maketx:unpremult & int &  If nonzero, unpremultiply color by alpha before

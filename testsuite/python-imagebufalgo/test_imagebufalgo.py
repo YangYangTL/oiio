@@ -35,6 +35,7 @@ try:
     checker = ImageBuf(ImageSpec(256, 256, 3, oiio.UINT8))
     ImageBufAlgo.checker (checker, 8, 8, 8, (0,0,0), (1,1,1))
     gray128 = make_constimage (128, 128, 3, oiio.HALF, (0.5,0.5,0.5))
+    gray64 = make_constimage (64, 64, 3, oiio.HALF, (0.5,0.5,0.5))
 
     # black
     b = ImageBuf (ImageSpec(320,240,3,oiio.UINT8))
@@ -51,6 +52,24 @@ try:
     b = ImageBuf (ImageSpec(256,256,3,oiio.UINT8))
     ImageBufAlgo.checker (b, 64, 64, 64, (1,.5,.5), (.5,1,.5), 10, 5)
     write (b, "checker.tif")
+
+    # noise-uniform
+    b = ImageBuf (ImageSpec(64,64,3,oiio.UINT8))
+    ImageBufAlgo.zero (b)
+    ImageBufAlgo.noise (b, "uniform", 0.25, 0.75)
+    write (b, "noise-uniform3.tif")
+
+    # noise-gaussian
+    b = ImageBuf (ImageSpec(64,64,3,oiio.UINT8))
+    ImageBufAlgo.zero (b)
+    ImageBufAlgo.noise (b, "gaussian", 0.5, 0.1);
+    write (b, "noise-gauss.tif")
+
+    # noise-gaussian
+    b = ImageBuf (ImageSpec(64,64,3,oiio.UINT8))
+    ImageBufAlgo.zero (b)
+    ImageBufAlgo.noise (b, "salt", 1, 0.01);
+    write (b, "noise-salt.tif")
 
     # channels, channel_append
     b = ImageBuf()
@@ -71,7 +90,7 @@ try:
 
     # flatten
     b = ImageBuf()
-    ImageBufAlgo.flatten (b, ImageBuf("../oiiotool/src/deepalpha.exr"))
+    ImageBufAlgo.flatten (b, ImageBuf("../oiiotool-deep/src/deepalpha.exr"))
     write (b, "flat.exr")
 
     # crop
@@ -165,6 +184,19 @@ try:
                       make_constimage(64,64,3,oiio.HALF,(.1,.1,.1),20,20))
     write (b, "sub.exr")
 
+    # Test --absdiff and --abs
+    # First, make a test image that's 0.5 on the left, -0.5 on the right
+    a = ImageBuf (ImageSpec(128,128,3,oiio.HALF))
+    ImageBufAlgo.fill (a, (0.5,0.5,0.5))
+    ImageBufAlgo.fill (a, (-0.25,-0.25,-0.25), oiio.ROI(0,64,0,128))
+    b = ImageBuf()
+    ImageBufAlgo.abs (b, a)
+    write (b, "abs.exr", oiio.HALF)
+    b = ImageBuf()
+    ImageBufAlgo.absdiff (b, a, (0.2,0.2,0.2))
+    write (b, "absdiff.exr", oiio.HALF)
+    a = ImageBuf()
+
     # mul
     b = ImageBuf()
     ImageBufAlgo.mul (b, gray128, 1.5)
@@ -177,6 +209,17 @@ try:
     # ImageBufAlgo.mul (b, make_constimage(64,64,3,oiio.HALF,(.1,.2,.3)),
     #                        make_constimage(64,64,3,oiio.HALF,(.1,.1,.1),20,20))
     # write (b, "mul.exr")
+
+    # div
+    b = ImageBuf()
+    ImageBufAlgo.div (b, gray64, make_constimage (64, 64, 3, oiio.HALF, (2.0,1,0.5)))
+    write (b, "div.exr", oiio.HALF)
+    b = ImageBuf()
+    ImageBufAlgo.div (b, gray64, 2.0)
+    write (b, "divc1.exr", oiio.HALF)
+    b = ImageBuf()
+    ImageBufAlgo.div (b, gray64, (2.0,1,0.5))
+    write (b, "divc2.exr", oiio.HALF)
 
     # pow
     b = ImageBuf()

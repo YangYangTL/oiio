@@ -40,10 +40,6 @@ class PNMOutput : public ImageOutput {
 public:
     virtual ~PNMOutput ();
     virtual const char * format_name (void) const { return "pnm"; }
-    virtual bool supports (const std::string &feature) const {
-        // Support nothing nonstandard
-        return false;
-    }
     virtual bool open (const std::string &name, const ImageSpec &spec,
                        OpenMode mode=Create);
     virtual bool close ();
@@ -174,6 +170,12 @@ PNMOutput::open (const std::string &name, const ImageSpec &userspec,
     int bits_per_sample = m_spec.get_int_attribute ("oiio:BitsPerSample", 8);
     m_dither = (m_spec.format == TypeDesc::UINT8) ?
                     m_spec.get_int_attribute ("oiio:dither", 0) : 0;
+
+    if (m_spec.nchannels != 1 && m_spec.nchannels != 3) {
+        error ("%s does not support %d-channel images\n",
+               format_name(), m_spec.nchannels);
+        return false;
+    }
 
     if (bits_per_sample == 1)
         m_pnm_type = 4;

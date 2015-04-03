@@ -33,13 +33,52 @@
 #include "OpenImageIO/filesystem.h"
 #include "OpenImageIO/fmath.h"
 #include "OpenImageIO/imageio.h"
+#include "OpenImageIO/imagebuf.h"
 
 
 
 OIIO_PLUGIN_NAMESPACE_BEGIN
 
+namespace {
 
-static void openjpeg_dummy_callback(const char*, void*) {}
+void openjpeg_dummy_callback(const char*, void*) {}
+
+// TODO(sergey): This actually a stright duplication from the png reader,
+// consider de-duplicating the code somehow?
+template <class T>
+void
+associateAlpha (T * data, int size, int channels, int alpha_channel, float gamma)
+{
+    T max = std::numeric_limits<T>::max();
+    if (gamma == 1) {
+        for (int x = 0;  x < size;  ++x, data += channels)
+            for (int c = 0;  c < channels;  c++)
+                if (c != alpha_channel){
+                    unsigned int f = data[c];
+                    data[c] = (f * data[alpha_channel]) / max;
+                }
+    }
+    else { //With gamma correction
+        float inv_max = 1.0 / max;
+        for (int x = 0;  x < size;  ++x, data += channels) {
+            float alpha_associate = pow(data[alpha_channel]*inv_max, gamma);
+            // We need to transform to linear space, associate the alpha, and
+            // then transform back.  That is, if D = data[c], we want
+            //
+            // D' = max * ( (D/max)^(1/gamma) * (alpha/max) ) ^ gamma
+            //
+            // This happens to simplify to something which looks like
+            // multiplying by a nonlinear alpha:
+            //
+            // D' = D * (alpha/max)^gamma
+            for (int c = 0;  c < channels;  c++)
+                if (c != alpha_channel)
+                    data[c] = static_cast<T>(data[c] * alpha_associate);
+        }
+    }
+}
+
+}  // namespace
 
 
 class Jpeg2000Input : public ImageInput {
@@ -47,15 +86,22 @@ class Jpeg2000Input : public ImageInput {
     Jpeg2000Input () { init (); }
     virtual ~Jpeg2000Input () { close (); }
     virtual const char *format_name (void) const { return "jpeg2000"; }
+    virtual int supports (string_view feature) const {
+        return false;
+        // FIXME: we should support Exif/IPTC, but currently don't.
+    }
     virtual bool open (const std::string &name, ImageSpec &spec);
+    virtual bool open (const std::string &name, ImageSpec &newspec,
+                       const ImageSpec &config);
     virtual bool close (void);
     virtual bool read_native_scanline (int y, int z, void *data);
 
  private:
     std::string m_filename;
-    int m_maxPrecision;
+    std::vector<int> m_bpp;   // per channel bpp
     opj_image_t *m_image;
     FILE *m_file;
+    bool m_keep_unassociated_alpha;   // Do not convert unassociated alpha
 
     void init (void);
 
@@ -65,8 +111,6 @@ class Jpeg2000Input : public ImageInput {
 
     template<typename T>
     void read_scanline(int y, int z, void *data);
-
-    uint16_t read_pixel(int p_precision, int p_PixelData);
 
     uint16_t baseTypeConvertU10ToU16(int src)
     {
@@ -89,15 +133,16 @@ class Jpeg2000Input : public ImageInput {
     template<typename T>
     void yuv_to_rgb(T *p_scanline)
     {
-        const imagesize_t scanline_size = m_spec.scanline_bytes();
-        for (imagesize_t i = 0; i < scanline_size; i += 3)
-        {
-            T red   = (T) (1.164f * (p_scanline[i+2] - 16.0f) + 1.596f * (p_scanline[i]   - 128.0f));
-            T green = (T) (1.164f * (p_scanline[i+2] - 16.0f) - 0.813f * (p_scanline[i]   - 128.0f) - 0.391f * (p_scanline[i+1] - 128.0f));
-            T blue  = (T) (1.164f * (p_scanline[i+2] - 16.0f) + 2.018f * (p_scanline[i+1] - 128.0f));
-            p_scanline[i] = red;
-            p_scanline[i+1] = green;
-            p_scanline[i+2] = blue;
+        for (int x = 0, i = 0; x < m_spec.width; ++x, i += m_spec.nchannels) {
+            float y = convert_type<T,float>(p_scanline[i+0]);
+            float u = convert_type<T,float>(p_scanline[i+1])-0.5f;
+            float v = convert_type<T,float>(p_scanline[i+2])-0.5f;
+            float r = y + 1.402*v;
+            float g = y - 0.344*u - 0.714*v;
+            float b = y + 1.772*u;
+            p_scanline[i+0] = convert_type<float,T>(r);
+            p_scanline[i+1] = convert_type<float,T>(g);
+            p_scanline[i+2] = convert_type<float,T>(b);
         } 
     }
 
@@ -138,6 +183,7 @@ Jpeg2000Input::init (void)
 {
     m_file = NULL;
     m_image = NULL;
+    m_keep_unassociated_alpha = false;
 }
 
 
@@ -194,22 +240,68 @@ Jpeg2000Input::open (const std::string &p_name, ImageSpec &p_spec)
         return false;
     }
 
-    m_maxPrecision = 0;
-    for(int i = 0; i < channelCount; i++)
-    {
-        m_maxPrecision = std::max(m_image->comps[i].prec, m_maxPrecision);
+    int maxPrecision = 0;
+    ROI datawindow;
+    m_bpp.clear ();
+    m_bpp.reserve (channelCount);
+    std::vector<TypeDesc> chantypes (channelCount, TypeDesc::UINT8);
+    for (int i = 0; i < channelCount; i++) {
+        const opj_image_comp_t &comp (m_image->comps[i]);
+        m_bpp.push_back (comp.prec);
+        maxPrecision = std::max(comp.prec, maxPrecision);
+        ROI roichan (comp.x0, comp.x0+comp.w*comp.dx,
+                     comp.y0, comp.y0+comp.h*comp.dy);
+        datawindow = roi_union (datawindow, roichan);
+        // std::cout << "  chan " << i << "\n";
+        // std::cout << "     dx=" << comp.dx << " dy=" << comp.dy
+        //           << " x0=" << comp.x0 << " y0=" << comp.y0
+        //           << " w=" << comp.w << " h=" << comp.h
+        //           << " prec=" << comp.prec << " bpp=" << comp.bpp << "\n";
+        // std::cout << "     sgnd=" << comp.sgnd << " resno_decoded=" << comp.resno_decoded << " factor=" << comp.factor << "\n";
+        // std::cout << "     roichan=" << roichan << "\n";
     }
+    // std::cout << "overall x0=" << m_image->x0 << " y0=" << m_image->y0
+    //           << " x1=" << m_image->x1 << " y1=" << m_image->y1 << "\n";
+    // std::cout << "color_space=" << m_image->color_space << "\n";
+    const TypeDesc format = (maxPrecision <= 8) ? TypeDesc::UINT8
+                                                : TypeDesc::UINT16;
 
-    const TypeDesc format = (m_maxPrecision <= 8) ? TypeDesc::UINT8
-                                                  : TypeDesc::UINT16;
+    m_spec = ImageSpec (datawindow.width(), datawindow.height(),
+                        channelCount, format);
+    m_spec.x = datawindow.xbegin;
+    m_spec.y = datawindow.ybegin;
+    m_spec.full_x = m_image->x0;
+    m_spec.full_y = m_image->y0;
+    m_spec.full_width  = m_image->x1;
+    m_spec.full_height = m_image->y1;
 
-
-    m_spec = ImageSpec(m_image->comps[0].w, m_image->comps[0].h, channelCount, format);
-    m_spec.attribute ("oiio:BitsPerSample", (unsigned int)m_maxPrecision);
-    m_spec.attribute ("oiio:Orientation", (unsigned int)1);
+    m_spec.attribute ("oiio:BitsPerSample", maxPrecision);
+    m_spec.attribute ("oiio:Orientation", 1);
+    m_spec.attribute ("oiio:ColorSpace", "sRGB");
+#ifndef OPENJPEG_VERSION
+    // Sigh... openjpeg.h doesn't seem to have a clear version #define.
+    // OPENJPEG_VERSION only seems to exist in 1.3, which doesn't have
+    // the ICC fields. So assume its absence in the newer one (at least,
+    // 1.5) means the field is valid.
+    if (m_image->icc_profile_len && m_image->icc_profile_buf)
+        m_spec.attribute ("ICCProfile", TypeDesc(TypeDesc::UINT8,m_image->icc_profile_len),
+                          m_image->icc_profile_buf);
+#endif
 
     p_spec = m_spec;
     return true;
+}
+
+
+
+bool
+Jpeg2000Input::open (const std::string &name, ImageSpec &newspec,
+                     const ImageSpec &config)
+{
+    // Check 'config' for any special requests
+    if (config.get_int_attribute("oiio:UnassociatedAlpha", 0) == 1)
+        m_keep_unassociated_alpha = true;
+    return open (name, newspec);
 }
 
 
@@ -220,6 +312,21 @@ Jpeg2000Input::read_native_scanline (int y, int z, void *data)
         read_scanline<uint8_t>(y, z, data);
     else
         read_scanline<uint16_t>(y, z, data);
+
+    // JPEG2000 specifically dictates unassociated (un-"premultiplied") alpha.
+    // Convert to associated unless we were requested not to do so.
+    if (m_spec.alpha_channel != -1 && !m_keep_unassociated_alpha) {
+        float gamma = m_spec.get_float_attribute ("oiio:Gamma", 2.2f);
+        if (m_spec.format == TypeDesc::UINT16)
+            associateAlpha ((unsigned short *)data, m_spec.width,
+                            m_spec.nchannels, m_spec.alpha_channel,
+                            gamma);
+        else
+            associateAlpha ((unsigned char *)data, m_spec.width,
+                            m_spec.nchannels, m_spec.alpha_channel,
+                            gamma);
+    }
+
     return true;
 }
 
@@ -274,66 +381,30 @@ Jpeg2000Input::create_decompressor()
 }
 
 
-inline uint16_t
-Jpeg2000Input::read_pixel(int p_nativePrecision, int p_pixelData)
-{
-    if (p_nativePrecision == 10)
-        return baseTypeConvertU10ToU16(p_pixelData);
-    if (p_nativePrecision == 12)
-        return baseTypeConvertU12ToU16(p_pixelData);
-    return p_pixelData;
-}
-
 
 template<typename T>
 void
 Jpeg2000Input::read_scanline(int y, int z, void *data)
 {
     T* scanline = static_cast<T*>(data);
-    if (m_spec.nchannels == 1) {
-        for (int i = 0; i < m_spec.width; i++)
-        {
-            scanline[i] = (T) read_pixel(m_image->comps[0].prec, m_image->comps[0].data[y*m_spec.width + i]);
-        }
-        return;
-    }
-
-    for (int i = 0, j = 0; i < m_spec.width; i++)
-    {
-        if (y % m_image->comps[0].dy == 0 && i % m_image->comps[0].dx == 0) {
-            const size_t data_offset = y/m_image->comps[0].dy * m_spec.width/m_image->comps[0].dx + i/m_image->comps[0].dx;
-            scanline[j++] = (T) read_pixel(m_image->comps[0].prec, m_image->comps[0].data[data_offset]);
-        }
-        else {
-            scanline[j++] = 0;
-        }
-
-        if (y % m_image->comps[1].dy == 0 && i % m_image->comps[1].dx == 0) {
-            const size_t data_offset = y/m_image->comps[1].dy * m_spec.width/m_image->comps[1].dx + i/m_image->comps[1].dx;
-            scanline[j++] = (T) read_pixel(m_image->comps[1].prec, m_image->comps[1].data[data_offset]);
-        }
-        else {
-            scanline[j++] = 0;
-        }
-
-        if (y % m_image->comps[2].dy == 0 && i % m_image->comps[2].dx == 0) {
-            const size_t data_offset = y/m_image->comps[2].dy * m_spec.width/m_image->comps[2].dx + i/m_image->comps[2].dx;
-            scanline[j++] = (T) read_pixel(m_image->comps[2].prec, m_image->comps[2].data[data_offset]);
-        }
-        else {
-            scanline[j++] = 0;
-        }
-
-        if (m_spec.nchannels < 4) {
-            continue;
-        }
-
-        if (y % m_image->comps[3].dy == 0 && i % m_image->comps[3].dx == 0) {
-            const size_t data_offset = y/m_image->comps[3].dy * m_spec.width/m_image->comps[3].dx + i/m_image->comps[3].dx;
-            scanline[j++] = (T) read_pixel(m_image->comps[3].prec, m_image->comps[3].data[data_offset]);
-        }
-        else {
-            scanline[j++] = 0;
+    int nc = m_spec.nchannels;
+    // It's easier to loop over channels
+    int bits = sizeof(T)*8;
+    for (int c = 0; c < nc; ++c) {
+        const opj_image_comp_t &comp (m_image->comps[c]);
+        int chan_ybegin = comp.y0, chan_yend = comp.y0 + comp.h*comp.dy;
+        int chan_xend = comp.w * comp.dx;
+        int yoff = (y - comp.y0) / comp.dy;
+        for (int x = 0;  x < m_spec.width;  ++x) {
+            if (yoff < chan_ybegin || yoff >= chan_yend || x > chan_xend) {
+                // Outside the window of this channel
+                scanline[x*nc+c] = T(0);
+            } else {
+                unsigned int val = comp.data[yoff*comp.w + x/comp.dx];
+                if (comp.sgnd)
+                    val += (1<<(bits/2-1));
+                scanline[x*nc+c] = (T) bit_range_convert (val, comp.prec, bits);
+            }
         }
     }
     if (m_image->color_space == CLRSPC_SYCC)

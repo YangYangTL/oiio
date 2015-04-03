@@ -127,6 +127,18 @@ object C_to_val_or_tuple (const T *vals, TypeDesc type, FUNC f)
 
 
 
+// Helper class to release the GIL, allowing other Python threads to
+// proceed, then re-acquire it again when the scope ends.
+class ScopedGILRelease {
+public:
+    ScopedGILRelease () : m_thread_state(PyEval_SaveThread()) { }
+    ~ScopedGILRelease () { PyEval_RestoreThread (m_thread_state); }
+private:
+    PyThreadState *m_thread_state;
+};
+
+
+
 class ImageInputWrap {
 private:
     /// Friend declaration for ImageOutputWrap::copy_image
@@ -142,7 +154,7 @@ public:
     bool open_regular (const std::string &name);
     bool open_with_config(const std::string &name, const ImageSpec &config);
     const ImageSpec &spec() const;
-    bool supports (const std::string &feature) const;
+    int supports (const std::string &feature) const;
     bool close();
     int current_subimage() const;
     int current_miplevel() const;
@@ -205,7 +217,7 @@ public:
                          stride_t zstride=AutoStride);
     bool copy_image (ImageInputWrap *iiw);
     const char *format_name () const;
-    bool supports (const std::string&) const;
+    int supports (const std::string&) const;
     std::string geterror()const;
 };
 
@@ -231,7 +243,8 @@ public:
     bool getattribute_char(const std::string&, char**);    
     bool getattribute_string(const std::string&, std::string&);
     std::string resolve_filename (const std::string&);
-    bool get_image_info (ustring, ustring, TypeDesc, void*);
+    bool get_image_info_old (ustring, ustring, TypeDesc, void*);
+    bool get_image_info (ustring, int, int, ustring, TypeDesc, void*);
     bool get_imagespec(ustring, ImageSpec&, int);
     bool get_pixels (ustring, int, int, int, int, int, int, 
                      int, int, TypeDesc, void*);

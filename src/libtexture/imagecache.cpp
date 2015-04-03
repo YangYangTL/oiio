@@ -68,7 +68,7 @@ namespace pvt {
 // The static perthread mutex needs to outlive the shared_image_cache
 // instance, so must be declared first in this file to avoid static
 // initialization order problems.
-mutex ImageCacheImpl::m_perthread_info_mutex;
+spin_mutex ImageCacheImpl::m_perthread_info_mutex;
 
 }
 
@@ -85,6 +85,8 @@ static ustring s_channels ("channels"), s_cachedpixeltype ("cachedpixeltype");
 static ustring s_exists ("exists");
 static ustring s_subimages ("subimages"), s_miplevels ("miplevels");
 static ustring s_datawindow ("datawindow"), s_displaywindow ("displaywindow");
+static ustring s_averagecolor ("averagecolor"), s_averagealpha ("averagealpha");
+static ustring s_constantcolor ("constantcolor"), s_constantalpha ("constantalpha");
 
 
 // Functor to compare filenames
@@ -115,8 +117,8 @@ iotime_compare (const ImageCacheFileRef &a, const ImageCacheFileRef &b)
 static bool
 iorate_compare (const ImageCacheFileRef &a, const ImageCacheFileRef &b)
 {
-    double arate = a->bytesread()/(1024.0*1024.0) / a->iotime();
-    double brate = b->bytesread()/(1024.0*1024.0) / b->iotime();
+    double arate = (a->iotime() == 0)? 0 : a->bytesread()/(1024.0*1024.0) / a->iotime();
+    double brate = (b->iotime() == 0)? 0 : b->bytesread()/(1024.0*1024.0) / b->iotime();
     return arate < brate;
 }
 
@@ -236,7 +238,8 @@ ImageCacheFile::LevelInfo::LevelInfo (const ImageSpec &spec_,
 ImageCacheFile::ImageCacheFile (ImageCacheImpl &imagecache,
                                 ImageCachePerThreadInfo *thread_info,
                                 ustring filename,
-                                ImageInput::Creator creator)
+                                ImageInput::Creator creator,
+                                const ImageSpec *config)
     : m_filename(filename), m_used(true), m_broken(false),
       m_texformat(TexFormatTexture),
       m_swrap(TextureOpt::WrapBlack), m_twrap(TextureOpt::WrapBlack),
@@ -246,7 +249,8 @@ ImageCacheFile::ImageCacheFile (ImageCacheImpl &imagecache,
       m_mipused(false), m_validspec(false), 
       m_imagecache(imagecache), m_duplicate(NULL),
       m_total_imagesize(0),
-      m_inputcreator(creator)
+      m_inputcreator(creator),
+      m_configspec(config ? new ImageSpec(*config) : NULL)
 {
     m_filename_original = m_filename;
     m_filename = imagecache.resolve_filename (m_filename_original.string());
@@ -299,6 +303,42 @@ ImageCacheFile::SubimageInfo::init (const ImageSpec &spec, bool forcefloat)
     channelsize = datatype.size();
     pixelsize = channelsize * spec.nchannels;
     eightbit = (datatype == TypeDesc::UINT8);
+
+    // See if there's a constant color tag
+    string_view software = spec.get_string_attribute ("Software");
+    bool from_maketx = Strutil::istarts_with (software, "OpenImageIO") ||
+                       Strutil::istarts_with (software, "maketx");
+
+    string_view constant_color = spec.get_string_attribute ("oiio:ConstantColor");
+    if (from_maketx && constant_color.size()) {
+        while (constant_color.size()) {
+            float val;
+            if (! Strutil::parse_float (constant_color, val))
+                break;
+            average_color.push_back (val);
+            if (! Strutil::parse_char (constant_color, ','))
+                break;
+        }
+        if (average_color.size() == size_t(spec.nchannels)) {
+            is_constant_image = true;
+            has_average_color = true;
+        }
+    }
+
+    // See if there's an average color tag
+    string_view avgcolor = spec.get_string_attribute ("oiio:AverageColor");
+    if (from_maketx && avgcolor.size()) {
+        while (avgcolor.size()) {
+            float val;
+            if (! Strutil::parse_float (avgcolor, val))
+                break;
+            average_color.push_back (val);
+            if (! Strutil::parse_char (avgcolor, ','))
+                break;
+        }
+        if (average_color.size() == size_t(spec.nchannels))
+            has_average_color = true;
+    }
 }
 
 
@@ -328,6 +368,8 @@ ImageCacheFile::open (ImageCachePerThreadInfo *thread_info)
     }
 
     ImageSpec configspec;
+    if (m_configspec)
+        configspec = *m_configspec;
     if (imagecache().unassociatedalpha())
         configspec.attribute ("oiio:UnassociatedAlpha", 1);
 
@@ -577,16 +619,6 @@ ImageCacheFile::init_from_spec ()
     std::string fing = spec.get_string_attribute ("oiio:SHA-1");
     if (fing.length()) {
         m_fingerprint = ustring(fing);
-    } else {
-        // If there was no "oiio:SHA-1" attribute, search for it as
-        // part of the ImageDescription.
-        std::string desc = spec.get_string_attribute ("ImageDescription");
-        const char *prefix = "SHA-1=";
-        size_t found = desc.rfind (prefix);
-        if (found != std::string::npos)
-            m_fingerprint = ustring (desc, found+strlen(prefix), 40);
-    }
-    if (m_fingerprint) {
         // If it looks like something other than OIIO wrote the file, forget
         // the fingerprint, it probably is not accurate.
         string_view software = spec.get_string_attribute ("Software");
@@ -949,11 +981,49 @@ ImageCacheFile::invalidate ()
 
 
 
+bool
+ImageCacheFile::get_average_color (float *avg, int subimage,
+                                   int chbegin, int chend)
+{
+    if (subimage < 0 || subimage > subimages())
+        return false;   // invalid subimage
+    SubimageInfo &si (m_subimages[subimage]);
+
+    if (! si.has_average_color) {
+        // try to figure it out by grabbing the single pixel at the 1x1
+        // MIP level.
+        int nlevels = (int) si.levels.size();
+        const ImageSpec &spec (si.spec(nlevels-1));  // The 1x1 level
+        if (spec.width != 1 || spec.height != 1 || spec.depth != 1)
+            return false;  // no hope, there's no 1x1 MIP level to sample
+        spin_lock lock (si.average_color_mutex);
+        if (! si.has_average_color) {
+            si.average_color.resize (spec.nchannels);
+            bool ok = m_imagecache.get_pixels (this, NULL, subimage, nlevels-1,
+                             spec.x, spec.x+1, spec.y, spec.y+1,
+                             spec.z, spec.z+1, 0, spec.nchannels,
+                             TypeDesc::TypeFloat, &si.average_color[0]);
+            si.has_average_color = ok;
+        }
+    }
+
+    if (si.has_average_color) {
+        const ImageSpec &spec (si.spec(0));
+        for (int i = 0, c = chbegin; c < chend; ++i, ++c)
+            avg[i] = (c < spec.nchannels) ? si.average_color[c] : 0.0f;
+        return true;
+    }
+
+    return false;
+}
+
+
+
 ImageCacheFile *
 ImageCacheImpl::find_file (ustring filename,
                            ImageCachePerThreadInfo *thread_info,
                            ImageInput::Creator creator,
-                           bool header_only)
+                           bool header_only, const ImageSpec *config)
 {
     // Debugging aid: attribute "substitute_image" forces all image
     // references to be to one named file.
@@ -964,7 +1034,7 @@ ImageCacheImpl::find_file (ustring filename,
     // expensive lock on the shared file cache.
     ImageCacheFile *tf = thread_info->find_file (filename);
 
-    // Part 1 - make sure the ImageCacheFile entry exists and is in the
+    // Make sure the ImageCacheFile entry exists and is in the
     // file cache.  For this part, we need to lock the file cache.
     bool newfile = false;
     if (! tf) {  // was not found in microcache
@@ -977,25 +1047,46 @@ ImageCacheImpl::find_file (ustring filename,
             tf = found->second.get();
         } else {
             // No such entry in the file cache.  Add it, but don't open yet.
-            tf = new ImageCacheFile (*this, thread_info, filename, creator);
+            tf = new ImageCacheFile (*this, thread_info, filename, creator,
+                                     config);
             m_files.insert (filename, tf, false);
             newfile = true;
         }
         m_files.unlock_bin (bin);
 
-        if (newfile)
+        if (newfile) {
             check_max_files (thread_info);
+            if (! tf->duplicate())
+                ++thread_info->m_stats.unique_files;
+        }
         thread_info->filename (filename, tf);  // add to the microcache
 #if IMAGECACHE_TIME_STATS
         thread_info->m_stats.find_file_time += timer();
 #endif
     }
 
-    // Part 2 - open tihe file if it's never been opened before.
+    // Ensure that it's open and do other important housekeeping.
+//    tf = verify_file (tf, thread_info, header_only);
+    return tf;
+}
+
+
+
+ImageCacheFile *
+ImageCacheImpl::verify_file (ImageCacheFile *tf,
+                             ImageCachePerThreadInfo *thread_info,
+                             bool header_only)
+{
+    if (! tf)
+        return NULL;
+
+    // Open the file if it's never been opened before.
     // No need to have the file cache locked for this, though we lock
     // the tf->m_input_mutex if we need to open it.
     if (! tf->validspec()) {
         Timer timer;
+        if (! thread_info)
+            thread_info = get_perthread_info ();
         recursive_lock_guard guard (tf->m_input_mutex);
         if (! tf->validspec()) {
             tf->open (thread_info);
@@ -1043,21 +1134,15 @@ ImageCacheImpl::find_file (ustring filename,
         }
     }
 
-    // if this is a duplicate texture, switch to the canonical copy
-    if (tf->duplicate()) {
-        if (! header_only)
-            tf = tf->duplicate();
+    if (! header_only) {
+        // if this is a duplicate texture, switch to the canonical copy
         // N.B. If looking up header info (i.e., get_image_info, rather
         // than getting pixels, use the original not the duplicate, since
         // metadata may differ even if pixels are identical).
-    } else {
-        // not a duplicate -- if opening the first time, count as unique
-        if (newfile)
-            ++thread_info->m_stats.unique_files;
-    }
-
-    if (! header_only)
+        if (tf->duplicate())
+            tf = tf->duplicate();
         tf->use ();  // Mark it as recently used
+    }
     return tf;
 }
 
@@ -1249,8 +1334,11 @@ void
 ImageCacheTile::read (ImageCachePerThreadInfo *thread_info)
 {
     size_t size = memsize_needed ();
-    ASSERT (memsize() == 0 && size > 0);
+    ASSERT (memsize() == 0 && size > OIIO_SIMD_MAX_SIZE_BYTES);
     m_pixels.reset (new char [m_pixels_size = size]);
+    // Clear the end pad values so there aren't NaNs sucked up by simd loads
+    memset (m_pixels.get() + size - OIIO_SIMD_MAX_SIZE_BYTES,
+            0, OIIO_SIMD_MAX_SIZE_BYTES);
     ImageCacheFile &file (m_id.file());
     m_valid = file.read_tile (thread_info, m_id.subimage(), m_id.miplevel(),
                               m_id.x(), m_id.y(), m_id.z(),
@@ -1356,7 +1444,7 @@ void
 ImageCacheImpl::mergestats (ImageCacheStatistics &stats) const
 {
     stats.init ();
-    lock_guard lock (m_perthread_info_mutex);
+    spin_lock lock (m_perthread_info_mutex);
     for (size_t i = 0;  i < m_all_perthread_info.size();  ++i)
         stats.merge (m_all_perthread_info[i]->m_stats);
 }
@@ -1470,7 +1558,7 @@ ImageCacheImpl::getstats (int level) const
             out << "    File I/O time : " 
                 << Strutil::timeintervalformat (stats.fileio_time);
             {
-                lock_guard lock (m_perthread_info_mutex);
+                spin_lock lock (m_perthread_info_mutex);
                 size_t nthreads = m_all_perthread_info.size();
                 if (nthreads > 1) {
                     double perthreadtime = stats.fileio_time / (float)nthreads;
@@ -1505,6 +1593,7 @@ ImageCacheImpl::getstats (int level) const
     size_t total_opens = 0, total_tiles = 0;
     imagesize_t total_bytes = 0;
     size_t total_untiled = 0, total_unmipped = 0, total_duplicates = 0;
+    size_t total_constant = 0;
     double total_iotime = 0;
     std::vector<ImageCacheFileRef> files;
     {
@@ -1520,14 +1609,16 @@ ImageCacheImpl::getstats (int level) const
                 continue;
             }
             bool found_untiled = false, found_unmipped = false;
+            bool found_const = true;
             for (int s = 0;  s < file->subimages();  ++s) {
-                found_untiled |= file->subimageinfo(s).untiled;
-                found_unmipped |= file->subimageinfo(s).unmipped;
+                const ImageCacheFile::SubimageInfo &si (file->subimageinfo(s));
+                found_untiled |= si.untiled;
+                found_unmipped |= si.unmipped;
+                found_const &= si.is_constant_image;
             }
-            if (found_untiled)
-                ++total_untiled;
-            if (found_unmipped)
-                ++total_unmipped;
+            total_untiled += found_untiled;
+            total_unmipped += found_unmipped;
+            total_constant += found_const;
         }
     }
 
@@ -1570,6 +1661,9 @@ ImageCacheImpl::getstats (int level) const
             }
 #endif
         }
+        if (total_constant)
+            out << "  " << total_constant << (total_constant == 1 ? " was" : " were")
+                << " constant-valued in all pixels\n";
         if (files.size() >= 50) {
             const int topN = 3;
             std::sort (files.begin(), files.end(), bytesread_compare);
@@ -1633,7 +1727,7 @@ void
 ImageCacheImpl::reset_stats ()
 {
     {
-        lock_guard lock (m_perthread_info_mutex);
+        spin_lock lock (m_perthread_info_mutex);
         for (size_t i = 0;  i < m_all_perthread_info.size();  ++i)
             m_all_perthread_info[i]->m_stats.init ();
     }
@@ -2094,6 +2188,24 @@ ImageCacheImpl::get_image_info (ustring filename, int subimage, int miplevel,
 {
     ImageCachePerThreadInfo *thread_info = get_perthread_info ();
     ImageCacheFile *file = find_file (filename, thread_info, NULL, true);
+    if (!file && dataname != s_exists) {
+        error ("Invalid image file \"%s\"", filename);
+        return false;
+    }
+    return get_image_info (file, thread_info, subimage, miplevel,
+                           dataname, datatype, data);
+}
+
+
+
+bool
+ImageCacheImpl::get_image_info (ImageCacheFile *file,
+                                ImageCachePerThreadInfo *thread_info,
+                                int subimage, int miplevel,
+                                ustring dataname,
+                                TypeDesc datatype, void *data)
+{
+    file = verify_file (file, thread_info, true);
     if (dataname == s_exists && datatype == TypeDesc::TypeInt) {
         // Just check for existence.  Need to do this before the invalid
         // file error below, since in this one case, it's not an error
@@ -2102,8 +2214,12 @@ ImageCacheImpl::get_image_info (ustring filename, int subimage, int miplevel,
         (void) geterror();  // eat any error generated by find_file
         return true;
     }
-    if (!file || file->broken()) {
-        error ("Invalid image file \"%s\"", filename.c_str());
+    if (!file) {
+        error ("Invalid image file");
+        return false;
+    }
+    if (file->broken()) {
+        error ("Invalid image file \"%s\"", file->filename());
         return false;
     }
     if (dataname == s_subimages && datatype == TypeDesc::TypeInt) {
@@ -2196,6 +2312,31 @@ ImageCacheImpl::get_image_info (ustring filename, int subimage, int miplevel,
             d[5] = spec.full_z + spec.full_depth - 1;
         }
     }
+    if (dataname == s_averagecolor && datatype.basetype == TypeDesc::FLOAT) {
+        int datalen = datatype.numelements() * datatype.aggregate;
+        return file->get_average_color ((float *)data, subimage, 0, datalen);
+    }
+    if (dataname == s_averagealpha && datatype == TypeDesc::FLOAT &&
+            spec.alpha_channel >= 0) {
+        return file->get_average_color ((float *)data, subimage,
+                                spec.alpha_channel, spec.alpha_channel+1);
+    }
+    if (dataname == s_constantcolor && datatype.basetype == TypeDesc::FLOAT) {
+        if (file->subimageinfo(subimage).is_constant_image) {
+            int datalen = datatype.numelements() * datatype.aggregate;
+            return file->get_average_color ((float *)data, subimage, 0, datalen);
+        }
+        return false;   // Fail if it's not a constant image
+    }
+    if (dataname == s_constantalpha && datatype == TypeDesc::FLOAT &&
+            spec.alpha_channel >= 0) {
+        if (file->subimageinfo(subimage).is_constant_image)
+            return file->get_average_color ((float *)data, subimage,
+                                    spec.alpha_channel, spec.alpha_channel+1);
+        else
+            return false;   // Fail if it's not a constant image
+    }
+
 
     // general case -- handle anything else that's able to be found by
     // spec.find_attribute().
@@ -2235,6 +2376,23 @@ ImageCacheImpl::get_imagespec (ustring filename, ImageSpec &spec,
 
 
 
+bool
+ImageCacheImpl::get_imagespec (ImageCacheFile *file,
+                               ImageCachePerThreadInfo *thread_info,
+                               ImageSpec &spec,
+                               int subimage, int miplevel, bool native)
+{
+    const ImageSpec *specptr = imagespec (file, thread_info, subimage, miplevel, native);
+    if (specptr) {
+        spec = *specptr;
+        return true;
+    } else {
+        return false;  // imagespec() already handled the errors
+    }
+}
+
+
+
 const ImageSpec *
 ImageCacheImpl::imagespec (ustring filename, int subimage, int miplevel,
                            bool native)
@@ -2245,8 +2403,25 @@ ImageCacheImpl::imagespec (ustring filename, int subimage, int miplevel,
         error ("Image file \"%s\" not found", filename.c_str());
         return NULL;
     }
+    return imagespec (file, thread_info, subimage, miplevel, native);
+}
+
+
+
+const ImageSpec *
+ImageCacheImpl::imagespec (ImageCacheFile *file,
+                           ImageCachePerThreadInfo *thread_info,
+                           int subimage, int miplevel, bool native)
+{
+    if (! file) {
+        error ("Image file handle was NULL");
+        return NULL;
+    }
+    if (! thread_info)
+        thread_info = get_perthread_info ();
+    file = verify_file (file, thread_info, true);
     if (file->broken()) {
-        error ("Invalid image file \"%s\"", filename.c_str());
+        error ("Invalid image file \"%s\"", file->filename());
         return NULL;
     }
     if (subimage < 0 || subimage >= file->subimages()) {
@@ -2291,6 +2466,21 @@ ImageCacheImpl::get_pixels (ustring filename, int subimage, int miplevel,
 
 
 bool
+ImageCacheImpl::get_pixels (ImageCacheFile *file,
+                            ImageCachePerThreadInfo *thread_info,
+                            int subimage, int miplevel,
+                            int xbegin, int xend, int ybegin, int yend,
+                            int zbegin, int zend,
+                            TypeDesc format, void *result)
+{
+    return get_pixels (file, thread_info, subimage, miplevel,
+                       xbegin, xend, ybegin, yend, zbegin, zend,
+                       0, -1, format, result);
+}
+
+
+
+bool
 ImageCacheImpl::get_pixels (ustring filename,
                             int subimage, int miplevel,
                             int xbegin, int xend, int ybegin, int yend,
@@ -2301,24 +2491,9 @@ ImageCacheImpl::get_pixels (ustring filename,
     ImageCachePerThreadInfo *thread_info = get_perthread_info ();
     ImageCacheFile *file = find_file (filename, thread_info);
     if (! file) {
-        error ("Image file \"%s\" not found", filename.c_str());
+        error ("Image file \"%s\" not found", filename);
         return false;
     }
-    if (file->broken()) {
-        error ("Invalid image file \"%s\"", filename.c_str());
-        return false;
-    }
-    if (subimage < 0 || subimage >= file->subimages()) {
-        error ("get_pixels asked for nonexistant subimage %d of \"%s\"",
-               subimage, filename.c_str());
-        return false;
-    }
-    if (miplevel < 0 || miplevel >= file->miplevels(subimage)) {
-        error ("get_pixels asked for nonexistant MIP level %d of \"%s\"",
-               miplevel, filename.c_str());
-        return false;
-    }
-
     return get_pixels (file, thread_info, subimage, miplevel,
                        xbegin, xend, ybegin, yend, zbegin, zend,
                        chbegin, chend, format, result,
@@ -2328,7 +2503,7 @@ ImageCacheImpl::get_pixels (ustring filename,
 
 
 bool
-ImageCacheImpl::get_pixels (ImageCacheFile *file, 
+ImageCacheImpl::get_pixels (ImageCacheFile *file,
                             ImageCachePerThreadInfo *thread_info,
                             int subimage, int miplevel,
                             int xbegin, int xend, int ybegin, int yend,
@@ -2336,6 +2511,26 @@ ImageCacheImpl::get_pixels (ImageCacheFile *file,
                             TypeDesc format, void *result,
                             stride_t xstride, stride_t ystride, stride_t zstride)
 {
+    if (! thread_info)
+        thread_info = get_perthread_info ();
+    file = verify_file (file, thread_info);
+    if (file->broken()) {
+        error ("Invalid image file \"%s\"", file->filename());
+        return false;
+    }
+    if (subimage < 0 || subimage >= file->subimages()) {
+        error ("get_pixels asked for nonexistant subimage %d of \"%s\"",
+               subimage, file->filename());
+        return false;
+    }
+    if (miplevel < 0 || miplevel >= file->miplevels(subimage)) {
+        error ("get_pixels asked for nonexistant MIP level %d of \"%s\"",
+               miplevel, file->filename());
+        return false;
+    }
+
+    if (! thread_info)
+        thread_info = get_perthread_info ();
     const ImageSpec &spec (file->spec(subimage, miplevel));
     bool ok = true;
 
@@ -2460,6 +2655,19 @@ ImageCacheImpl::get_tile (ustring filename, int subimage, int miplevel,
 {
     ImageCachePerThreadInfo *thread_info = get_perthread_info ();
     ImageCacheFile *file = find_file (filename, thread_info);
+    return get_tile (file, thread_info, subimage, miplevel, x, y, z);
+}
+
+
+
+ImageCache::Tile *
+ImageCacheImpl::get_tile (ImageHandle *file, Perthread *thread_info,
+                          int subimage, int miplevel,
+                          int x, int y, int z)
+{
+    if (! thread_info)
+        thread_info = get_perthread_info ();
+    file = verify_file (file, thread_info);
     if (! file || file->broken())
         return NULL;
     const ImageSpec &spec (file->spec(subimage,miplevel));
@@ -2508,14 +2716,13 @@ ImageCacheImpl::tile_pixels (ImageCache::Tile *tile, TypeDesc &format) const
 
 
 bool
-ImageCacheImpl::add_file (ustring filename, ImageInput::Creator creator)
+ImageCacheImpl::add_file (ustring filename, ImageInput::Creator creator,
+                          const ImageSpec *config)
 {
-    if (! creator) {
-        error ("ImageCache::add_file must be given an ImageInput::Creator");
-        return false;
-    }
     ImageCachePerThreadInfo *thread_info = get_perthread_info ();
-    ImageCacheFile *file = find_file (filename, thread_info, creator);
+    ImageCacheFile *file = find_file (filename, thread_info, creator,
+                                      false, config);
+    file = verify_file (file, thread_info);
     if (!file || file->broken())
         return false;
     return true;
@@ -2531,6 +2738,7 @@ ImageCacheImpl::add_tile (ustring filename, int subimage, int miplevel,
 {
     ImageCachePerThreadInfo *thread_info = get_perthread_info ();
     ImageCacheFile *file = find_file (filename, thread_info);
+    file = verify_file (file, thread_info);
     if (! file || file->broken()) {
         error ("Cannot add_tile for an image file that was not set up with add_file()");
         return false;
@@ -2669,20 +2877,51 @@ ImageCacheImpl::invalidate_all (bool force)
 
 
 ImageCachePerThreadInfo *
-ImageCacheImpl::get_perthread_info ()
+ImageCacheImpl::create_thread_info ()
 {
-    ImageCachePerThreadInfo *p = m_perthread_info.get();
+    ImageCachePerThreadInfo *p = new ImageCachePerThreadInfo;
+    // printf ("New perthread %p\n", (void *)p);
+    spin_lock lock (m_perthread_info_mutex);
+    m_all_perthread_info.push_back (p);
+    p->shared = true;  // both the IC and the caller point to it
+    return p;
+}
+
+
+
+void
+ImageCacheImpl::destroy_thread_info (ImageCachePerThreadInfo *thread_info)
+{
+    if (! thread_info)
+        return;
+    spin_lock lock (m_perthread_info_mutex);
+    for (size_t i = 0;  i < m_all_perthread_info.size();  ++i) {
+        if (m_all_perthread_info[i] == thread_info) {
+            m_all_perthread_info[i] = NULL;
+            break;
+        }
+    }
+    delete thread_info;
+}
+
+
+
+ImageCachePerThreadInfo *
+ImageCacheImpl::get_perthread_info (ImageCachePerThreadInfo *p)
+{
+    if (!p)
+        p = m_perthread_info.get();
     if (! p) {
         p = new ImageCachePerThreadInfo;
         m_perthread_info.reset (p);
         // printf ("New perthread %p\n", (void *)p);
-        lock_guard lock (m_perthread_info_mutex);
+        spin_lock lock (m_perthread_info_mutex);
         m_all_perthread_info.push_back (p);
         p->shared = true;  // both the IC and the thread point to it
     }
     if (p->purge) {  // has somebody requested a tile purge?
         // This is safe, because it's our thread.
-        lock_guard lock (m_perthread_info_mutex);
+        spin_lock lock (m_perthread_info_mutex);
         p->tile = NULL;
         p->lasttile = NULL;
         p->purge = 0;
@@ -2699,7 +2938,7 @@ ImageCacheImpl::get_perthread_info ()
 void
 ImageCacheImpl::erase_perthread_info ()
 {
-    lock_guard lock (m_perthread_info_mutex);
+    spin_lock lock (m_perthread_info_mutex);
     for (size_t i = 0;  i < m_all_perthread_info.size();  ++i) {
         ImageCachePerThreadInfo *p = m_all_perthread_info[i];
         if (p) {
@@ -2725,7 +2964,7 @@ ImageCacheImpl::erase_perthread_info ()
 void
 ImageCacheImpl::cleanup_perthread_info (ImageCachePerThreadInfo *p)
 {
-    lock_guard lock (m_perthread_info_mutex);
+    spin_lock lock (m_perthread_info_mutex);
     if (p) {
         // Clear the microcache.
         p->tile = NULL;
@@ -2743,7 +2982,7 @@ void
 ImageCacheImpl::purge_perthread_microcaches ()
 {
     // Mark the per-thread microcaches as invalid
-    lock_guard lock (m_perthread_info_mutex);
+    spin_lock lock (m_perthread_info_mutex);
     for (size_t i = 0, e = m_all_perthread_info.size();  i < e;  ++i)
         if (m_all_perthread_info[i])
             m_all_perthread_info[i]->purge = 1;

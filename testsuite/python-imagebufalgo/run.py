@@ -3,11 +3,11 @@
 import os.path
 
 imagedir = parent + "oiio-images"
-refdir2 = "../oiiotool/ref/"
-refdir3 = "../oiiotool-composite/ref/"
-refdir4 = "../oiiotool-fixnan/ref/"
-failthresh = 0.004
-failpercent = 0.2
+refdir2 = "../../../../testsuite/oiiotool/ref/"
+refdir3 = "../../../../testsuite/oiiotool-composite/ref/"
+refdir4 = "../../../../testsuite/oiiotool-fixnan/ref/"
+refdir5 = "../../../../testsuite/oiiotool-deep/ref/"
+refdir6 = "../../../../testsuite/oiiotool-pattern/ref/"
 
 
 def checkref (name) :
@@ -17,6 +17,10 @@ def checkref (name) :
         return diff_command (name, refdir3+name)
     elif os.path.isfile(refdir4+name) :
         return diff_command (name, refdir4+name)
+    elif os.path.isfile(refdir5+name) :
+        return diff_command (name, refdir5+name)
+    elif os.path.isfile(refdir6+name) :
+        return diff_command (name, refdir6+name)
     else :
         return diff_command (name, refdir+name)
 
@@ -26,6 +30,7 @@ command += "python test_imagebufalgo.py > out.txt ;"
 
 # Checkout outputs -- some of the refs are in the oiiotool test dir
 for f in [ "black.tif", "filled.tif", "checker.tif",
+           "noise-uniform3.tif", "noise-gauss.tif", "noise-salt.tif",
            "chanshuffle.tif", "ch-rgba.exr", "ch-z.exr",
            "chappend-rgbaz.exr", "flat.exr",
            "crop.tif", "cut.tif", "pasted.tif",
@@ -35,7 +40,9 @@ for f in [ "black.tif", "filled.tif", "checker.tif",
            "flip.tif", "flop.tif", "flipflop.tif", "reorient1.tif",
            "transpose.tif",
            "cshift.tif", "cadd1.exr", "cadd2.exr", "add.exr", "sub.exr",
+           "abs.exr", "absdiff.exr",
            "cmul1.exr", "cmul2.exr", "cpow1.exr", "cpow2.exr",
+           "div.exr", "divc1.exr", "divc2.exr",
            "chsum.tif", "grid-clamped.tif",
            "rangecompress.tif", "rangeexpand.tif",
            "resize.tif", "resample.tif",

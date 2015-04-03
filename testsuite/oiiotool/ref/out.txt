@@ -77,6 +77,12 @@ copyA.0009.jpg       :  360 x  240, 3 channel, uint8 jpeg
 copyA.0010.jpg       :  360 x  240, 3 channel, uint8 jpeg
 Comparing "filled.tif" and "ref/filled.tif"
 PASS
+Comparing "fillh.tif" and "ref/fillh.tif"
+PASS
+Comparing "fillv.tif" and "ref/fillv.tif"
+PASS
+Comparing "fill4.tif" and "ref/fill4.tif"
+PASS
 Comparing "autotrim.tif" and "ref/autotrim.tif"
 PASS
 Comparing "resample.tif" and "ref/resample.tif"
@@ -112,6 +118,8 @@ PASS
 Comparing "pasted.tif" and "ref/pasted.tif"
 PASS
 Comparing "mosaic.tif" and "ref/mosaic.tif"
+PASS
+Comparing "trim.tif" and "ref/trim.tif"
 PASS
 Comparing "flip.tif" and "ref/flip.tif"
 PASS
@@ -155,11 +163,15 @@ Comparing "chappend-rgbaz.exr" and "ref/chappend-rgbaz.exr"
 PASS
 Comparing "chname.exr" and "ref/chname.exr"
 PASS
-Comparing "flat.exr" and "ref/flat.exr"
-PASS
 Comparing "cmul1.exr" and "ref/cmul1.exr"
 PASS
 Comparing "cmul2.exr" and "ref/cmul2.exr"
+PASS
+Comparing "div.exr" and "ref/div.exr"
+PASS
+Comparing "divc1.exr" and "ref/divc1.exr"
+PASS
+Comparing "divc2.exr" and "ref/divc2.exr"
 PASS
 Comparing "cadd1.exr" and "ref/cadd1.exr"
 PASS
@@ -172,6 +184,14 @@ PASS
 Comparing "add.exr" and "ref/add.exr"
 PASS
 Comparing "sub.exr" and "ref/sub.exr"
+PASS
+Comparing "subc.exr" and "ref/subc.exr"
+PASS
+Comparing "abs.exr" and "ref/abs.exr"
+PASS
+Comparing "absdiff.exr" and "ref/absdiff.exr"
+PASS
+Comparing "absdiffc.exr" and "ref/absdiffc.exr"
 PASS
 Comparing "chsum.tif" and "ref/chsum.tif"
 PASS
@@ -210,6 +230,10 @@ PASS
 Comparing "unpolar.exr" and "ref/unpolar.exr"
 PASS
 Comparing "labeladd.exr" and "ref/labeladd.exr"
+PASS
+Comparing "exprgradient.tif" and "ref/exprgradient.tif"
+PASS
+Comparing "exprcropped.tif" and "ref/exprcropped.tif"
 PASS
 Comparing "rgbfromtga.png" and "ref/rgbfromtga.png"
 PASS

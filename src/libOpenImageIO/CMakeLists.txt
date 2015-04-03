@@ -1,3 +1,8 @@
+message (STATUS "Create imagio_pvt.h from imageio_pvt.h.in")
+file (TO_NATIVE_PATH "${PLUGIN_SEARCH_PATH}" PLUGIN_SEARCH_PATH_NATIVE)
+configure_file (imageio_pvt.h.in "${CMAKE_CURRENT_BINARY_DIR}/imageio_pvt.h" @ONLY)
+include_directories("${CMAKE_CURRENT_BINARY_DIR}")
+
 file (GLOB libOpenImageIO_hdrs ../include/OpenImageIO/*.h)
 
 if (NOT USE_EXTERNAL_PUGIXML)
@@ -24,6 +29,7 @@ set (libOpenImageIO_srcs exif.cpp formatspec.cpp imagebuf.cpp
                           ../libutil/argparse.cpp
                           ../libutil/errorhandler.cpp 
                           ../libutil/filesystem.cpp 
+                          ../libutil/farmhash.cpp 
                           ../libutil/filter.cpp 
                           ../libutil/hashes.cpp 
                           ../libutil/paramlist.cpp 
@@ -34,6 +40,7 @@ set (libOpenImageIO_srcs exif.cpp formatspec.cpp imagebuf.cpp
                           ../libutil/timer.cpp 
                           ../libutil/typedesc.cpp 
                           ../libutil/ustring.cpp 
+                          ../libutil/xxhash.cpp 
                           ../libtexture/texturesys.cpp 
                           ../libtexture/texture3d.cpp 
                           ../libtexture/environment.cpp 

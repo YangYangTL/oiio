@@ -52,7 +52,7 @@ public:
     ICOOutput ();
     virtual ~ICOOutput ();
     virtual const char * format_name (void) const { return "ico"; }
-    virtual bool supports (const std::string &feature) const;
+    virtual int supports (string_view feature) const;
     virtual bool open (const std::string &name, const ImageSpec &spec,
                        OpenMode mode=Create);
     virtual bool close ();
@@ -411,11 +411,13 @@ ICOOutput::open (const std::string &name, const ImageSpec &userspec,
 
 
 
-bool
-ICOOutput::supports (const std::string &feature) const
+int
+ICOOutput::supports (string_view feature) const
 {
     // advertise our support for subimages
     if (Strutil::iequals (feature, "multiimage"))
+        return true;
+    if (Strutil::iequals (feature, "alpha"))
         return true;
     return false;
 }

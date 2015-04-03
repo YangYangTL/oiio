@@ -37,7 +37,7 @@
 #define OPENIMAGEIO_TEXTURE_PVT_H
 
 #include "OpenImageIO/texture.h"
-
+#include "OpenImageIO/simd.h"
 
 OIIO_NAMESPACE_ENTER
 {
@@ -116,8 +116,16 @@ public:
         result = m_Mc2w;
     }
 
-    virtual Perthread *get_perthread_info (void) {
-        return (Perthread *)m_imagecache->get_perthread_info ();
+    virtual Perthread *get_perthread_info (Perthread *thread_info = NULL) {
+        return (Perthread *)m_imagecache->get_perthread_info ((ImageCachePerThreadInfo *)thread_info);
+    }
+    virtual Perthread *create_thread_info () {
+        ASSERT (m_imagecache);
+        return (Perthread *)m_imagecache->create_thread_info ();
+    }
+    virtual void destroy_thread_info (Perthread *threadinfo) {
+        ASSERT (m_imagecache);
+        m_imagecache->destroy_thread_info ((ImageCachePerThreadInfo *)threadinfo);
     }
 
     virtual TextureHandle *get_texture_handle (ustring filename,
@@ -125,6 +133,10 @@ public:
         PerThreadInfo *thread_info = thread ? (PerThreadInfo *)thread
                                        : m_imagecache->get_perthread_info ();
         return (TextureHandle *) find_texturefile (filename, thread_info);
+    }
+
+    virtual bool good (TextureHandle *texture_handle) {
+        return texture_handle && ! ((TextureFile *)texture_handle)->broken();
     }
 
     virtual bool texture (ustring filename, TextureOpt &options,
@@ -251,13 +263,33 @@ public:
 
     virtual bool get_texture_info (ustring filename, int subimage,
                            ustring dataname, TypeDesc datatype, void *data);
+    virtual bool get_texture_info (TextureHandle *texture_handle,
+                           Perthread *thread_info, int subimage,
+                           ustring dataname, TypeDesc datatype, void *data);
+    virtual bool get_texture_info (TextureHandle *texture_handle, int subimage,
+                           ustring dataname, TypeDesc datatype, void *data) {
+        return get_texture_info (texture_handle, NULL, subimage,
+                                 dataname, datatype, data);
+    }
 
     virtual bool get_imagespec (ustring filename, int subimage,
                                 ImageSpec &spec);
+    virtual bool get_imagespec (TextureHandle *texture_handle,
+                                Perthread *thread_info, int subimage,
+                                ImageSpec &spec);
 
     virtual const ImageSpec *imagespec (ustring filename, int subimage=0);
+    virtual const ImageSpec *imagespec (TextureHandle *texture_handle,
+                                        Perthread *thread_info=NULL,
+                                        int subimage=0);
 
     virtual bool get_texels (ustring filename, TextureOpt &options,
+                             int miplevel, int xbegin, int xend,
+                             int ybegin, int yend, int zbegin, int zend,
+                             int chbegin, int chend,
+                             TypeDesc format, void *result);
+    virtual bool get_texels (TextureHandle *texture_handle,
+                             Perthread *thread_info, TextureOpt &options,
                              int miplevel, int xbegin, int xend,
                              int ybegin, int yend, int zbegin, int zend,
                              int chbegin, int chend,
@@ -283,9 +315,15 @@ private:
     /// Find the TextureFile record for the named texture, or NULL if no
     /// such file can be found.
     TextureFile *find_texturefile (ustring filename, PerThreadInfo *thread_info) {
-        TextureFile *texturefile = m_imagecache->find_file (filename, thread_info);
-        if (!texturefile || texturefile->broken())
-            error ("%s", m_imagecache->geterror().c_str());
+        return m_imagecache->find_file (filename, thread_info);
+    }
+    TextureFile *verify_texturefile (TextureFile *texturefile,
+                                     PerThreadInfo *thread_info) {
+        texturefile = m_imagecache->verify_file (texturefile, thread_info);
+        if (!texturefile || texturefile->broken()) {
+            std::string err = m_imagecache->geterror();
+            error ("%s", err.size() ? err.c_str() : "(unknown error)");
+        }
         return texturefile;
     }
 
@@ -345,43 +383,36 @@ private:
                          float _dsdy, float _dtdy,
                          float *result, float *dresultds, float *resultdt);
     
-    // If simd is nonzero, it's guaranteed that all float* inputs and
-    // outputs are padded to length 'simd' and aligned to a simd*4-byte
-    // boundary (for example, 4 for SSE). This means that the functions can
-    // behave AS IF the number of channels being retrieved is simd, and any
-    // extra values returned will be discarded by the caller.
-    typedef bool (TextureSystemImpl::*accum_prototype)
-                              (float s, float t, int level,
-                               TextureFile &texturefile,
-                               PerThreadInfo *thread_info,
-                               TextureOpt &options,
-                               int nchannels_result, int actualchannels,
-                               float weight, float *accum,
-                               float *daccumds, float *daccumdt);
-
-    bool accum_sample_closest (float s, float t, int level,
-                               TextureFile &texturefile,
-                               PerThreadInfo *thread_info,
-                               TextureOpt &options,
-                               int nchannels_result, int actualchannels,
-                               float weight, float *accum,
-                               float *daccumds, float *daccumdt);
-
-    bool accum_sample_bilinear (float s, float t, int level,
-                                TextureFile &texturefile,
-                                PerThreadInfo *thread_info,
-                                TextureOpt &options,
-                               int nchannels_result, int actualchannels,
-                                float weight, float *accum,
-                                float *daccumds, float *daccumdt);
-
-    bool accum_sample_bicubic (float s, float t, int level,
-                               TextureFile &texturefile,
-                               PerThreadInfo *thread_info,
-                               TextureOpt &options,
-                               int nchannels_result, int actualchannels,
-                               float weight, float *accum,
-                               float *daccumds, float *daccumdt);
+    // For the samplers, it's guaranteed that all float* inputs and outputs
+    // are padded to length 'simd' and aligned to a simd*4-byte boundary
+    // (for example, 4 for SSE). This means that the functions can behave AS
+    // IF the number of channels being retrieved is simd, and any extra
+    // values returned will be discarded by the caller.
+    typedef bool (TextureSystemImpl::*sampler_prototype)
+                         (int nsamples, const float *s, const float *t,
+                          int level, TextureFile &texturefile,
+                          PerThreadInfo *thread_info, TextureOpt &options,
+                          int nchannels_result, int actualchannels,
+                          const float *weight, simd::float4 *accum,
+                          simd::float4 *daccumds, simd::float4 *daccumdt);
+    bool sample_closest  (int nsamples, const float *s, const float *t,
+                          int level, TextureFile &texturefile,
+                          PerThreadInfo *thread_info, TextureOpt &options,
+                          int nchannels_result, int actualchannels,
+                          const float *weight, simd::float4 *accum,
+                          simd::float4 *daccumds, simd::float4 *daccumdt);
+    bool sample_bilinear (int nsamples, const float *s, const float *t,
+                          int level, TextureFile &texturefile,
+                          PerThreadInfo *thread_info, TextureOpt &options,
+                          int nchannels_result, int actualchannels,
+                          const float *weight, simd::float4 *accum,
+                          simd::float4 *daccumds, simd::float4 *daccumdt);
+    bool sample_bicubic  (int nsamples, const float *s, const float *t,
+                          int level, TextureFile &texturefile,
+                          PerThreadInfo *thread_info, TextureOpt &options,
+                          int nchannels_result, int actualchannels,
+                          const float *weight, simd::float4 *accum,
+                          simd::float4 *daccumds, simd::float4 *daccumdt);
 
     // Define a prototype of a member function pointer for texture3d
     // lookups.
@@ -523,7 +554,7 @@ TextureSystemImpl::anisotropic_aspect (float &majorlength, float &minorlength,
         //    aliasing along the major axis.  You can't please everybody.
         if (options.conservative_filter) {
 #if 0
-            // Soltion (a) -- never alias by blurring more along minor axis
+            // Solution (a) -- never alias by blurring more along minor axis
             minorlength = majorlength / options.anisotropic;
 #else
             // Solution (c) -- this is our default, usually a nice balance.

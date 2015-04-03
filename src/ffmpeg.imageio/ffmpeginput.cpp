@@ -54,8 +54,10 @@ public:
     virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec);
     virtual bool read_native_scanline (int y, int z, void *data);
     void read_frame(int pos);
+#if 0
     const char *metadata (const char * key);
     bool has_metadata (const char * key);
+#endif
     bool seek (int pos);
     double fps() const;
     int64_t time_stamp(int pos) const;
@@ -138,6 +140,25 @@ FFmpegInput::~FFmpegInput()
 bool
 FFmpegInput::open (const std::string &name, ImageSpec &spec)
 {
+    // Temporary workaround: refuse to open a file whose name does not
+    // indicate that it's a movie file. This avoids the problem that ffmpeg
+    // is willing to open tiff and other files better handled by other
+    // plugins. The better long-term solution is to replace av_register_all
+    // with our own function that registers only the formats that we want
+    // this reader to handle. At some point, we will institute that superior
+    // approach, but in the mean time, this is a quick solution that 90%
+    // does the job.
+    bool valid_extension = false;
+    for (int i = 0; ffmpeg_input_extensions[i]; ++i)
+        if (Strutil::ends_with (name, ffmpeg_input_extensions[i])) {
+            valid_extension = true;
+            break;
+        }
+    if (! valid_extension) {
+        error ("\"%s\" could not open input", name);
+        return false;
+    }
+
     static boost::once_flag init_flag = BOOST_ONCE_INIT;
     boost::call_once (&av_register_all, init_flag);
     const char *file_name = name.c_str();
@@ -153,7 +174,7 @@ FFmpegInput::open (const std::string &name, ImageSpec &spec)
         return false;
     }
     m_video_stream = -1;
-    for (int i=0; i<m_format_context->nb_streams; i++) {
+    for (unsigned int i=0; i<m_format_context->nb_streams; i++) {
         if (m_format_context->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
             if (m_video_stream < 0) {
                 m_video_stream=i;
@@ -184,7 +205,7 @@ FFmpegInput::open (const std::string &name, ImageSpec &spec)
     if (stream->r_frame_rate.num != 0 && stream->r_frame_rate.den != 0) {
         m_frame_rate = stream->r_frame_rate;
     }
-    if (static_cast<uint64_t> (m_format_context->duration) != AV_NOPTS_VALUE) {
+    if (static_cast<int64_t>(m_format_context->duration) != int64_t(AV_NOPTS_VALUE)) {
         m_frames = static_cast<uint64_t> ((fps() * static_cast<double>(m_format_context->duration) / 
                                                    static_cast<uint64_t>(AV_TIME_BASE)));
     } else {
@@ -315,7 +336,7 @@ FFmpegInput::read_frame(int pos)
     while (av_read_frame (m_format_context, &pkt) >=0) {
         if (pkt.stream_index == m_video_stream) {
             double pts = 0;
-            if (static_cast<uint64_t> (pkt.dts) != AV_NOPTS_VALUE) {
+            if (static_cast<int64_t>(pkt.dts) != int64_t(AV_NOPTS_VALUE)) {
                 pts = av_q2d (m_format_context->streams[m_video_stream]->time_base) * pkt.dts;
             }
             int current_pos = int(pts * fps() + 0.5f);
@@ -323,7 +344,7 @@ FFmpegInput::read_frame(int pos)
                 current_pos = m_last_search_pos + 1;
             }
             m_last_search_pos = current_pos;
-            if (static_cast<uint64_t> (m_format_context->start_time) != AV_NOPTS_VALUE) {
+            if (static_cast<int64_t>(m_format_context->start_time) != int64_t(AV_NOPTS_VALUE)) {
                 current_pos -= static_cast<int> (m_format_context->start_time * fps() / AV_TIME_BASE);
             }
             if (current_pos >= m_subimage) {
@@ -360,11 +381,14 @@ FFmpegInput::read_frame(int pos)
 }
 
 
+
+#if 0
 const char *
 FFmpegInput::metadata (const char * key)
 {
     AVDictionaryEntry * entry = av_dict_get (m_format_context->metadata, key, NULL, 0);
     return entry ? av_strdup(entry->value) : NULL;
+    // FIXME -- that looks suspiciously like a memory leak
 }
 
 
@@ -374,6 +398,7 @@ FFmpegInput::has_metadata (const char * key)
 {
     return av_dict_get (m_format_context->metadata, key, NULL, 0); // is there a better to check exists?
 }
+#endif
 
 
 
@@ -400,7 +425,7 @@ int64_t
 FFmpegInput::time_stamp(int pos) const
 {
     int64_t timestamp = static_cast<int64_t>((static_cast<double> (pos) / fps()) * AV_TIME_BASE);
-    if (static_cast<uint64_t> (m_format_context->start_time) != AV_NOPTS_VALUE) {
+    if (static_cast<int64_t>(m_format_context->start_time) != int64_t(AV_NOPTS_VALUE)) {
         timestamp += m_format_context->start_time;
     }
     return timestamp;

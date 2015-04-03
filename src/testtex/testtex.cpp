@@ -88,6 +88,8 @@ static bool tube = false;
 static bool use_handle = false;
 static float cachesize = -1;
 static int maxfiles = -1;
+static int mipmode = TextureOpt::MipModeDefault;
+static int interpmode = TextureOpt::InterpSmartBicubic;
 static float missing[4] = {-1, 0, 0, 1};
 static float fill = -1;  // -1 signifies unset
 static float scalefactor = 1.0f;
@@ -149,6 +151,8 @@ getargs (int argc, const char *argv[])
                   "--wrap %s", &wrapmodes, "Set wrap mode (default, black, clamp, periodic, mirror, overscan)",
                   "--aniso %d", &anisotropic,
                       Strutil::format("Set max anisotropy (default: %d)", anisotropic).c_str(),
+                  "--mipmode %d", &mipmode, "Set mip mode (default: 0 = aniso)",
+                  "--interpmode %d", &interpmode, "Set interp mode (default: 3 = smart bicubic)",
                   "--missing %f %f %f", &missing[0], &missing[1], &missing[2],
                         "Specify missing texture color",
                   "--autotile %d", &autotile, "Set auto-tile size for the image cache",
@@ -215,6 +219,8 @@ initialize_opt (TextureOpt &opt, int nchannels)
     TextureOpt::parse_wrapmodes (wrapmodes.c_str(), opt.swrap, opt.twrap);
     opt.rwrap = opt.swrap;
     opt.anisotropic = anisotropic;
+    opt.mipmode = (TextureOpt::MipMode) mipmode;
+    opt.interpmode = (TextureOpt::InterpMode) interpmode;
 }
 
 
@@ -227,36 +233,55 @@ test_gettextureinfo (ustring filename)
     int res[2] = {0};
     ok = texsys->get_texture_info (filename, 0, ustring("resolution"),
                                    TypeDesc(TypeDesc::INT,2), res);
-    std::cerr << "Result of get_texture_info resolution = " << ok << ' ' << res[0] << 'x' << res[1] << "\n";
+    std::cout << "Result of get_texture_info resolution = " << ok << ' ' << res[0] << 'x' << res[1] << "\n";
 
     int chan = 0;
     ok = texsys->get_texture_info (filename, 0, ustring("channels"),
                                    TypeDesc::INT, &chan);
-    std::cerr << "Result of get_texture_info channels = " << ok << ' ' << chan << "\n";
+    std::cout << "Result of get_texture_info channels = " << ok << ' ' << chan << "\n";
 
     float fchan = 0;
     ok = texsys->get_texture_info (filename, 0, ustring("channels"),
                                    TypeDesc::FLOAT, &fchan);
-    std::cerr << "Result of get_texture_info channels = " << ok << ' ' << fchan << "\n";
+    std::cout << "Result of get_texture_info channels = " << ok << ' ' << fchan << "\n";
 
     int dataformat = 0;
     ok = texsys->get_texture_info (filename, 0, ustring("format"),
                                    TypeDesc::INT, &dataformat);
-    std::cerr << "Result of get_texture_info data format = " << ok << ' ' 
+    std::cout << "Result of get_texture_info data format = " << ok << ' '
               << TypeDesc((TypeDesc::BASETYPE)dataformat).c_str() << "\n";
 
     const char *datetime = NULL;
     ok = texsys->get_texture_info (filename, 0, ustring("DateTime"),
                                    TypeDesc::STRING, &datetime);
-    std::cerr << "Result of get_texture_info datetime = " << ok << ' ' 
+    std::cout << "Result of get_texture_info datetime = " << ok << ' '
               << (datetime ? datetime : "") << "\n";
+
+    float avg[4];
+    ok = texsys->get_texture_info (filename, 0, ustring("averagecolor"),
+                                   TypeDesc(TypeDesc::FLOAT,4), avg);
+    std::cout << "Result of get_texture_info averagecolor = " << (ok?"yes":"no\n");
+    if (ok)
+        std::cout << " " << avg[0] << ' ' << avg[1] << ' '
+                  << avg[2] << ' ' << avg[3] << "\n";
+    ok = texsys->get_texture_info (filename, 0, ustring("averagealpha"),
+                                   TypeDesc::TypeFloat, avg);
+    std::cout << "Result of get_texture_info averagealpha = " << (ok?"yes":"no\n");
+    if (ok)
+        std::cout << " " << avg[0] << "\n";
+    ok = texsys->get_texture_info (filename, 0, ustring("constantcolor"),
+                                   TypeDesc(TypeDesc::FLOAT,4), avg);
+    std::cout << "Result of get_texture_info constantcolor = " << (ok?"yes":"no\n");
+    if (ok)
+        std::cout << " " << avg[0] << ' ' << avg[1] << ' '
+                  << avg[2] << ' ' << avg[3] << "\n";
 
     const char *texturetype = NULL;
     ok = texsys->get_texture_info (filename, 0, ustring("textureformat"),
                                    TypeDesc::STRING, &texturetype);
-    std::cerr << "Texture type is " << ok << ' '
+    std::cout << "Texture type is " << ok << ' '
               << (texturetype ? texturetype : "") << "\n";
-    std::cerr << "\n";
+    std::cout << "\n";
 }
 
 
@@ -519,7 +544,7 @@ plain_tex_region (ImageBuf &image, ustring filename, Mapping2D mapping,
 void
 test_plain_texture (Mapping2D mapping)
 {
-    std::cerr << "Testing 2d texture " << filenames[0] << ", output = " 
+    std::cout << "Testing 2d texture " << filenames[0] << ", output = "
               << output_filename << "\n";
     const int nchannels = 4;
     ImageSpec outspec (output_xres, output_yres, nchannels, TypeDesc::HALF);
@@ -541,7 +566,7 @@ test_plain_texture (Mapping2D mapping)
             // Use a different filename for each iteration
             int texid = std::min (iter, (int)filenames.size()-1);
             filename = (filenames[texid]);
-            std::cerr << "iter " << iter << " file " << filename << "\n";
+            std::cout << "iter " << iter << " file " << filename << "\n";
         }
 
         ImageBufAlgo::parallel_image (boost::bind(plain_tex_region, boost::ref(image), filename, mapping,
@@ -613,7 +638,7 @@ tex3d_region (ImageBuf &image, ustring filename, Mapping3D mapping,
 void
 test_texture3d (ustring filename, Mapping3D mapping)
 {
-    std::cerr << "Testing 3d texture " << filename << ", output = " 
+    std::cout << "Testing 3d texture " << filename << ", output = "
               << output_filename << "\n";
     int nchannels = nchannels_override ? nchannels_override : 4;
     ImageSpec outspec (output_xres, output_yres, nchannels, TypeDesc::HALF);
@@ -1053,7 +1078,7 @@ main (int argc, const char *argv[])
     OIIO::attribute ("threads", nthreads);
 
     texsys = TextureSystem::create ();
-    std::cerr << "Created texture system\n";
+    std::cout << "Created texture system\n";
     texsys->attribute ("statistics:level", 2);
     texsys->attribute ("autotile", autotile);
     texsys->attribute ("automip", (int)automip);

@@ -42,7 +42,7 @@ public:
     PtexOutput ();
     virtual ~PtexOutput ();
     virtual const char * format_name (void) const { return "ptex"; }
-    virtual bool supports (const std::string &feature) const;
+    virtual int supports (string_view feature) const;
     virtual bool open (const std::string &name, const ImageSpec &spec,
                        ImageOutput::OpenMode mode);
     virtual bool close ();
@@ -89,17 +89,17 @@ PtexOutput::~PtexOutput ()
 
 
 
-bool
-PtexOutput::supports (const std::string &feature) const
+int
+PtexOutput::supports (string_view feature) const
 {
-    // Support nothing nonstandard
-    if (feature == "tiles")
-        return true;
-    if (feature == "multiimage")
-        return true;
-    if (feature == "mipmap")
-        return false;   // N.B. because PtexWriters mipmaps automatically!
-    return false;
+    return (feature == "tiles"
+         || feature == "multiimage"
+         || feature == "mipmap"
+         || feature == "alpha"
+         || feature == "nchannels"
+         || feature == "arbitrary_metadata"
+         || feature == "exif"   // Because of arbitrary_metadata
+         || feature == "iptc"); // Because of arbitrary_metadata
 }
 
 

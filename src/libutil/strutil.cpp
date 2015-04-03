@@ -605,13 +605,14 @@ Strutil::parse_int (string_view &str, int &val, bool eat)
     if (! p.size())
         return false;
     const char *end = p.begin();
-    val = strtol (p.begin(), (char**)&end, 10);
+    int v = strtol (p.begin(), (char**)&end, 10);
     if (end == p.begin())
         return false;  // no integer found
     if (eat) {
         p.remove_prefix (end-p.begin());
         str = p;
     }
+    val = v;
     return true;
 }
 
@@ -625,13 +626,14 @@ Strutil::parse_float (string_view &str, float &val, bool eat)
     if (! p.size())
         return false;
     const char *end = p.begin();
-    val = (float) strtod (p.begin(), (char**)&end);
+    float v = (float) strtod (p.begin(), (char**)&end);
     if (end == p.begin())
         return false;  // no integer found
     if (eat) {
         p.remove_prefix (end-p.begin());
         str = p;
     }
+    val = v;
     return true;
 }
 
@@ -741,6 +743,45 @@ Strutil::parse_until (string_view &str, string_view sep, bool eat)
         str = p;
     }
     return string_view (begin, wordlen);
+}
+
+
+string_view
+Strutil::parse_nested (string_view &str, bool eat)
+{
+    // Make sure we have a valid string and ascertain the characters that
+    // nest and unnest.
+    string_view p = str;
+    if (! p.size())
+        return string_view();    // No proper opening
+    char opening = p[0];
+    char closing = 0;
+    if      (opening == '(') closing = ')';
+    else if (opening == '[') closing = ']';
+    else if (opening == '{') closing = '}';
+    else    return string_view();
+
+    // Walk forward in the string until we exactly unnest compared to the
+    // start.
+    size_t len = 1;
+    int nesting = 1;
+    for ( ; nesting && len < p.size(); ++len) {
+        if (p[len] == opening)
+            ++nesting;
+        else if (p[len] == closing)
+            --nesting;
+    }
+
+    if (nesting)
+        return string_view();    // No proper closing
+
+    ASSERT (p[len-1] == closing);
+
+    // The result is the first len characters
+    string_view result = str.substr (0, len);
+    if (eat)
+        str.remove_prefix (len);
+    return result;
 }
 
 

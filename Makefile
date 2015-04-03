@@ -92,6 +92,10 @@ ifneq (${USE_PYTHON},)
 MY_CMAKE_FLAGS += -DUSE_PYTHON:BOOL=${USE_PYTHON}
 endif
 
+ifneq (${USE_PYTHON3},)
+MY_CMAKE_FLAGS += -DUSE_PYTHON3:BOOL=${USE_PYTHON3}
+endif
+
 ifneq (${PYTHON_VERSION},)
 MY_CMAKE_FLAGS += -DPYTHON_VERSION:STRING=${PYTHON_VERSION}
 endif
@@ -124,6 +128,10 @@ ifneq (${USE_OCIO},)
 MY_CMAKE_FLAGS += -DUSE_OCIO:BOOL=${USE_OCIO}
 endif
 
+ifneq (${USE_NUKE},)
+MY_CMAKE_FLAGS += -DUSE_NUKE:BOOL=${USE_NUKE}
+endif
+
 ifneq (${USE_OPENSSL},)
 MY_CMAKE_FLAGS += -DUSE_OPENSSL:BOOL=${USE_OPENSSL}
 endif
@@ -153,6 +161,14 @@ endif
 
 ifneq (${BOOST_HOME},)
 MY_CMAKE_FLAGS += -DBOOST_ROOT:STRING=${BOOST_HOME}
+endif
+
+ifneq (${NUKE_HOME},)
+MY_CMAKE_FLAGS += -DNuke_ROOT:STRING=${NUKE_HOME}
+endif
+
+ifneq (${NUKE_VERSION},)
+MY_CMAKE_FLAGS += -DNUKE_VERSION:STRING=${NUKE_VERSION}
 endif
 
 ifneq (${STOP_ON_WARNING},)
@@ -354,6 +370,7 @@ help:
 	@echo "      USE_OPENGL=0             Skip anything that needs OpenGL"
 	@echo "      FORCE_OPENGL_1=1         Force iv to use OpenGL's fixed pipeline"
 	@echo "      USE_PYTHON=0             Don't build the Python binding"
+	@echo "      USE_PYTHON3=1            If 1, try to build against Python3, not 2.x"
 	@echo "      PYTHON_VERSION=2.6       Specify the Python version"
 	@echo "      USE_FIELD3D=0            Don't build the Field3D plugin"
 	@echo "      USE_FFMPEG=0             Don't build the FFmpeg plugin"
@@ -361,7 +378,10 @@ help:
 	@echo "      USE_GIF=0                Don't build the GIF plugin"
 	@echo "      USE_OCIO=0               Don't use OpenColorIO even if found"
 	@echo "      OCIO_HOME=path           Custom OpenColorIO installation"
-	@echo "      USE_OPENSSL=0            Don't use OpenSSL even if found"
+	@echo "      USE_NUKE=0               Don't build Nuke plugins"
+	@echo "      NUKE_HOME=path           Custom Nuke installation"
+	@echo "      NUKE_VERSION=ver         Custom Nuke version"
+#	@echo "      USE_OPENSSL=1            Use OpenSSL's SHA-1 implementation"
 	@echo "      USE_LIBRAW=0             Don't use LibRaw, even if found"
 	@echo "      LIBRAW_PATH=path         Custom LibRaw installation"
 	@echo "      FIELD3D_HOME=path        Custom Field3D installation"

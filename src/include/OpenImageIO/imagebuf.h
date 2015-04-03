@@ -177,8 +177,12 @@ public:
     /// made, whichever comes first. If a non-NULL imagecache is supplied,
     /// it will specifiy a custom ImageCache to use; if otherwise, the
     /// global/shared ImageCache will be used.
-    explicit ImageBuf (string_view name, int subimage=0,
-                       int miplevel=0, ImageCache *imagecache = NULL);
+    /// If 'config' is not NULL, it points to an ImageSpec giving requests
+    /// or special instructions to be passed on to the eventual
+    /// ImageInput::open() call.
+    explicit ImageBuf (string_view name, int subimage=0, int miplevel=0,
+                       ImageCache *imagecache = NULL,
+                       const ImageSpec *config = NULL);
 
     /// Construct an ImageBuf to read the named image -- but don't actually
     /// read it yet!  The image will actually be read when other methods
@@ -229,8 +233,12 @@ public:
 
     /// Forget all previous info, reset this ImageBuf to a new image
     /// that is uninitialized (no pixel values, no size or spec).
+    /// If 'config' is not NULL, it points to an ImageSpec giving requests
+    /// or special instructions to be passed on to the eventual
+    /// ImageInput::open() call.
     void reset (string_view name, int subimage, int miplevel,
-                ImageCache *imagecache = NULL);
+                ImageCache *imagecache = NULL,
+                const ImageSpec *config = NULL);
 
     /// Forget all previous info, reset this ImageBuf to a new image
     /// that is uninitialized (no pixel values, no size or spec).
@@ -243,15 +251,6 @@ public:
     /// Forget all previous info, reset this ImageBuf to a blank
     /// image of the given name and dimensions.
     void reset (string_view name, const ImageSpec &spec);
-
-    /// Copy spec to *this, and then allocate enough space the right
-    /// size for an image described by the format spec.  If the ImageBuf
-    /// already has allocated pixels, their values will not be preserved
-    /// if the new spec does not describe an image of the same size and
-    /// data type as it used to be.
-    /// DEPRECATED (1.3) -- I don't see any reason why this should be
-    /// favored over reset(spec).
-    void alloc (const ImageSpec &spec);
 
     /// Which type of storage is being used for the pixels?
     IBStorage storage () const;
@@ -292,13 +291,6 @@ public:
     /// any subsequent write().
     void set_write_tiles (int width=0, int height=0, int depth=0);
 
-    /// DEPRECATED (1.3) synonym for write().  Kept for now for backward
-    /// compatibility.
-    bool save (string_view filename = string_view(),
-               string_view fileformat = string_view(),
-               ProgressCallback progress_callback=NULL,
-               void *progress_callback_data=NULL) const;
-
     /// Write the image to the open ImageOutput 'out'.  Return true if
     /// all went ok, false if there were errors writing.  It does NOT
     /// close the file when it's done (and so may be called in a loop to
@@ -306,6 +298,18 @@ public:
     bool write (ImageOutput *out,
                 ProgressCallback progress_callback=NULL,
                 void *progress_callback_data=NULL) const;
+
+    /// Force the ImageBuf to be writeable. That means that if it was
+    /// previously backed by ImageCache (storage was IMAGECACHE), it will
+    /// force a full read so that the whole image is in local memory. This
+    /// will invalidate any current iterators on the image. It has no effect
+    /// if the image storage not IMAGECACHE.  Return true if it works
+    /// (including if no read was necessary), false if something went
+    /// horribly wrong. If keep_cache_type is true, it preserves any IC-
+    /// forced data types (you might want to do this if it is critical that
+    /// the apparent data type doesn't change, for example if you are
+    /// calling make_writeable from within a type-specialized function).
+    bool make_writeable (bool keep_cache_type = false);
 
     /// Copy all the metadata from src to *this (except for pixel data
     /// resolution, channel information, and data format).
@@ -333,6 +337,9 @@ public:
     /// number of channels.  The data type of the pixels will be
     /// converted automatically to the data type of the app buffer.
     bool copy (const ImageBuf &src);
+
+    /// copy(src), but with optional override of pixel data type
+    bool copy (const ImageBuf &src, TypeDesc format /*= TypeDesc::UNKNOWN*/);
 
     /// Swap with another ImageBuf
     void swap (ImageBuf &other) { std::swap (m_impl, other.m_impl); }
@@ -431,20 +438,28 @@ public:
     void interppixel (float x, float y, float *pixel,
                       WrapMode wrap=WrapBlack) const;
 
-    /// Linearly interpolate at image data NDC coordinates (s,t), where
-    /// (0,0) is the upper left corner of the pixel data window, (1,1)
-    /// the lower right corner of the pixel data.
-    /// FIXME -- lg thinks that this is stupid, and the only useful NDC
-    /// space is the one used by interppixel_NDC_full.  We should deprecate
-    /// this in the future.
+    /// Linearly interpolate at NDC coordinates (s,t), where (0,0) is
+    /// the upper left corner of the display window, (1,1) the lower
+    /// right corner of the display window.
     void interppixel_NDC (float s, float t, float *pixel,
                           WrapMode wrap=WrapBlack) const;
 
-    /// Linearly interpolate at space coordinates (s,t), where (0,0) is
-    /// the upper left corner of the display window, (1,1) the lower
-    /// right corner of the display window.
+    /// DEPCRECATED (1.5) synonym for interppixel_NDC.
     void interppixel_NDC_full (float s, float t, float *pixel,
                                WrapMode wrap=WrapBlack) const;
+
+    /// Bicubic interpolation at pixel coordinates (x,y), where (0,0) is
+    /// the upper left corner, (xres,yres) the lower right corner of
+    /// the pixel data.
+    void interppixel_bicubic (float x, float y, float *pixel,
+                              WrapMode wrap=WrapBlack) const;
+
+    /// Bicubic interpolattion at NDC space coordinates (s,t), where (0,0)
+    /// is the upper left corner of the display (aka "full") window, (1,1)
+    /// the lower right corner of the display window.
+    void interppixel_bicubic_NDC (float s, float t, float *pixel,
+                                  WrapMode wrap=WrapBlack) const;
+
 
     /// Set the pixel with coordinates (x,y,0) to have the values in
     /// pixel[0..n-1].  The number of channels copied, n, is the minimum
@@ -596,14 +611,6 @@ public:
     void set_full (int xbegin, int xend, int ybegin, int yend,
                    int zbegin, int zend);
 
-    /// Set the "full" (a.k.a. display) window to [xbegin,xend) x
-    /// [ybegin,yend) x [zbegin,zend).  If bordercolor is not NULL, also
-    /// set the spec's "oiio:bordercolor" attribute.
-    /// DEPRECATED (1.3) -- we don't use the 'bordercolor' parameter, and
-    /// it seems strange, so let's phase it out.
-    void set_full (int xbegin, int xend, int ybegin, int yend,
-                   int zbegin, int zend, const float *bordercolor);
-
     /// Return pixel data window for this ImageBuf as a ROI.
     ROI roi () const;
 
@@ -664,6 +671,17 @@ public:
     /// coordinates or channel number are out of range or if it has no
     /// deep samples.
     float deep_value (int x, int y, int z, int c, int s) const;
+
+    /// Retrieve deep sample value within a pixel, as an untigned int.
+    uint32_t deep_value_uint (int x, int y, int z, int c, int s) const;
+    /// Set deep sample value within a pixel, as a float.
+    void set_deep_value (int x, int y, int z, int c, int s, float value);
+    /// Set deep sample value within a pixel, as a uint32.
+    void set_deep_value_uint (int x, int y, int z, int c, int s, uint32_t value);
+
+    /// Allocate all the deep samples, called after deepdata()->nsamples
+    /// is set.
+    void deep_alloc ();
 
     /// Retrieve the "deep" data.
     DeepData *deepdata ();
@@ -980,6 +998,17 @@ public:
                 }
             }
         }
+
+        // Make sure it's writeable. Use with caution!
+        void make_writeable () {
+            if (! m_localpixels) {
+                const_cast<ImageBuf*>(m_ib)->make_writeable (true);
+                DASSERT (m_ib->storage() != IMAGECACHE);
+                m_tile = NULL;
+                m_proxydata = NULL;
+                init_ib (m_wrap);
+            }
+        }
     };
 
     /// Templated class for referring to an individual pixel in an
@@ -1008,6 +1037,7 @@ public:
         Iterator (ImageBuf &ib, WrapMode wrap=WrapDefault)
             : IteratorBase(ib,wrap)
         {
+            make_writeable ();
             pos (m_rng_xbegin,m_rng_ybegin,m_rng_zbegin);
         }
         /// Construct from an ImageBuf and a specific pixel index.
@@ -1016,12 +1046,14 @@ public:
                   WrapMode wrap=WrapDefault)
             : IteratorBase(ib,wrap)
         {
+            make_writeable ();
             pos (x, y, z);
         }
         /// Construct read-write iteration region from ImageBuf and ROI.
         Iterator (ImageBuf &ib, const ROI &roi, WrapMode wrap=WrapDefault)
             : IteratorBase (ib, roi, wrap)
         {
+            make_writeable ();
             pos (m_rng_xbegin, m_rng_ybegin, m_rng_zbegin);
         }
         /// Construct from an ImageBuf and designated region -- iterate
@@ -1031,6 +1063,7 @@ public:
                   WrapMode wrap=WrapDefault)
             : IteratorBase(ib, xbegin, xend, ybegin, yend, zbegin, zend, wrap)
         {
+            make_writeable ();
             pos (m_rng_xbegin, m_rng_ybegin, m_rng_zbegin);
         }
         /// Copy constructor.
@@ -1038,6 +1071,7 @@ public:
         Iterator (Iterator &i)
             : IteratorBase (i.m_ib, i.m_wrap)
         {
+            make_writeable ();
             pos (i.m_x, i.m_y, i.m_z);
         }
 

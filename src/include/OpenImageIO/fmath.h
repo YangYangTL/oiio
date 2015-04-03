@@ -178,6 +178,18 @@ clamped_mult64 (uint64_t a, uint64_t b)
 }
 
 
+
+/// Bitwise circular rotation left by k bits (for 32 bit unsigned integers)
+OIIO_FORCEINLINE uint32_t rotl32 (uint32_t x, int k) {
+    return (x<<k) | (x>>(32-k));
+}
+
+/// Bitwise circular rotation left by k bits (for 64 bit unsigned integers)
+OIIO_FORCEINLINE uint64_t rotl64 (uint64_t x, int k) {
+    return (x<<k) | (x>>(64-k));
+}
+
+
 // (end of integer helper functions)
 ////////////////////////////////////////////////////////////////////////////
 
@@ -219,7 +231,7 @@ inline T madd (const T& a, const T& b, const T& c) {
 /// This is a template, and so should work for any types.
 template <class T, class Q>
 inline T
-lerp (T v0, T v1, Q x)
+lerp (const T& v0, const T& v1, const Q& x)
 {
     // NOTE: a*(1-x) + b*x is much more numerically stable than a+x*(b-a)
     return v0*(Q(1)-x) + v1*x;
@@ -232,7 +244,7 @@ lerp (T v0, T v1, Q x)
 /// result.  This is a template, and so should work for any types.
 template <class T, class Q>
 inline T
-bilerp (T v0, T v1, T v2, T v3, Q s, Q t)
+bilerp(const T& v0, const T& v1, const T& v2, const T& v3, const Q& s, const Q& t)
 {
     // NOTE: a*(t-1) + b*t is much more numerically stable than a+t*(b-a)
     Q s1 = Q(1) - s;
@@ -330,6 +342,58 @@ trilerp_mad (const T *v0, const T *v1, const T *v2, const T *v3,
     Q r1 = Q(1) - r;
     bilerp_mad (v0, v1, v2, v3, s, t, scale*r1, n, result);
     bilerp_mad (v4, v5, v6, v7, s, t, scale*r, n, result);
+}
+
+
+
+/// Evaluate B-spline weights in w[0..3] for the given fraction.  This
+/// is an important component of performing a cubic interpolation.
+template <typename T>
+inline void evalBSplineWeights (T w[4], T fraction)
+{
+    T one_frac = 1 - fraction;
+    w[0] = T(1.0 / 6.0) * one_frac * one_frac * one_frac;
+    w[1] = T(2.0 / 3.0) - T(0.5) * fraction * fraction * (2 - fraction);
+    w[2] = T(2.0 / 3.0) - T(0.5) * one_frac * one_frac * (2 - one_frac);
+    w[3] = T(1.0 / 6.0) * fraction * fraction * fraction;
+}
+
+
+/// Evaluate B-spline derivative weights in w[0..3] for the given
+/// fraction.  This is an important component of performing a cubic
+/// interpolation with derivatives.
+template <typename T>
+inline void evalBSplineWeightDerivs (T dw[4], T fraction)
+{
+    T one_frac = 1 - fraction;
+    dw[0] = -T(0.5) * one_frac * one_frac;
+    dw[1] =  T(0.5) * fraction * (3 * fraction - 4);
+    dw[2] = -T(0.5) * one_frac * (3 * one_frac - 4);
+    dw[3] =  T(0.5) * fraction * fraction;
+}
+
+
+
+/// Bicubically interoplate arrays of pointers arranged in a 4x4 pattern
+/// with val[0] pointing to the data in the upper left corner, val[15]
+/// pointing to the lower right) at coordinates (s,t), storing the
+/// results in 'result'.  These are all vectors, so do it for each of
+/// 'n' contiguous values (using the same s,t interpolants).
+template <class T>
+inline void
+bicubic_interp (const T **val, T s, T t, int n, T *result)
+{
+    for (int c = 0;  c < n;  ++c)
+        result[c] = T(0);
+    T wx[4]; evalBSplineWeights (wx, s);
+    T wy[4]; evalBSplineWeights (wy, t);
+    for (int j = 0;  j < 4;  ++j) {
+        for (int i = 0;  i < 4;  ++i) {
+            T w = wx[i] * wy[j];
+            for (int c = 0;  c < n;  ++c)
+                result[c] += w * val[j*4+i][c];
+        }
+    }
 }
 
 
@@ -819,8 +883,8 @@ inline T safe_logb (T x) {
 #endif
 }
 
-/// Safe pow: clamp the domain so it never returns Inf or NaN has divide by
-/// zero error.
+/// Safe pow: clamp the domain so it never returns Inf or NaN or has divide
+/// by zero error.
 template <typename T>
 inline T safe_pow (T x, T y) {
     if (y == T(0)) return T(1);
@@ -829,11 +893,8 @@ inline T safe_pow (T x, T y) {
     if ((x < T(0)) && (y != floor(y))) return T(0);
     // FIXME: this does not match "fast" variant because clamping limits are different
     T r = std::pow(x, y);
-    // Clamp to avoid Inf values.  We purposely clamp at considerably
-    // less than FLOAT_MAX (but still bigger than anyone is likely to
-    // need) so that subsequent additions or multiplications are less
-    // likely to overflow and end up with an Inf right afterwards.
-    const T big = T(1e30);
+    // Clamp to avoid returning Inf.
+    const T big = std::numeric_limits<T>::max();
     return clamp (r, -big, big);
 }
 
@@ -1205,8 +1266,13 @@ inline float fast_tanh (float x) {
 }
 
 inline float fast_safe_pow (float x, float y) {
-    if (y == 0) return 1.0f; // x^1=1
+    if (y == 0) return 1.0f; // x^0=1
     if (x == 0) return 0.0f; // 0^y=0
+    // be cheap & exact for special case of squaring and identity
+    if (y == 1.0f)
+        return x;
+    if (y == 2.0f)
+        return std::min (x*x, std::numeric_limits<float>::max());
     float sign = 1.0f;
     if (x < 0) {
         // if x is negative, only deal with integer powers
@@ -1362,7 +1428,7 @@ T invert (Func &func, T y, T xmin=0.0, T xmax=1.0,
 ////////////////////////////////////////////////////////////////////////////
 
 
-// DEPRECATED - Some back-compatibility, will remove soon
+// DEPRECATED(1.5) - Some back-compatibility, will remove soon
 inline float safe_sqrtf (float x) { return safe_sqrt(x); }
 inline float safe_acosf (float x) { return safe_acos(x); }
 inline float fast_expf (float x) { return fast_exp(x); }

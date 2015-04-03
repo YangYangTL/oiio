@@ -25,7 +25,7 @@ out its resolution, and read the pixels (converting them into
         std::vector<unsigned char> pixels (xres*yres*channels);
         in->read_image (TypeDesc::UINT8, &pixels[0]);
         in->close ();
-        delete in;
+        ImageInput::destroy (in);
 \end{code}
 
 \noindent Here is a breakdown of what work this code is doing:
@@ -69,7 +69,7 @@ out its resolution, and read the pixels (converting them into
   the plugin.
   \begin{code}
         in->close ();
-        delete in;
+        ImageInput::destroy (in);
   \end{code}
 \end{itemize}
 
@@ -447,7 +447,7 @@ This can be accomplished using the technique of the following example:
                         f[8], f[9], f[10], f[11], f[12], f[13], f[14], f[15]);
             }
             else
-                printf ("<unknown data type>");
+                printf (" <unknown data type> ");
             printf ("\n");
         }
 \end{code}
@@ -573,7 +573,7 @@ multi-image files:
         // to find a next MIP level.
 
         in->close ();
-        delete in;
+        ImageInput::destroy (in);
 \end{code}
 
 In this example, we have used \readimage, but of course \readscanline
@@ -716,7 +716,7 @@ a file and print all its values:
         }
     }
     in->close ();
-    delete in;
+    ImageInput::destroy (in);
 \end{code}
 
 
@@ -783,17 +783,17 @@ elaborated with error checking and reporting:
         if (! in->read_image (TypeDesc::UINT8, pixels)) {
             std::cerr << "Could not read pixels from " << filename 
                       << ", error = " << in->geterror() << "\n";
-            delete in;
+            ImageInput::destroy (in);
             return;
         }
 
         if (! in->close ()) {
             std::cerr << "Error closing " << filename 
                       << ", error = " << in->geterror() << "\n";
-            delete in;
+            ImageInput::destroy (in);
             return;
         }
-        delete in;
+        ImageInput::destroy (in);
 \end{code}
 
 
@@ -832,19 +832,40 @@ finds one that's able to open the file without error.  This just
 creates the \ImageInput, it does not open the file.
 \apiend
 
+\apiitem{void {\ce destroy} (ImageInput *input)}
+\NEW  % 1.6
+
+Destroy an \ImageInput that was created by {\cf create()} or {\cf open()}.
+The {\cf destroy()} method is just a wrapper around operator {\cf delete},
+but by being implemented within the \product DLL, it can ensure that the
+memory deallocation is done in the same DLL arena as where it was originally
+allocated. This is considered safer than a bare {\cf delete} when
+used inside ``plug-ins,'' especially on Windows systems.
+\apiend
+
 \apiitem{const char * {\ce format_name} (void) const}
 Return the name of the format implemented by this class.
 \apiend
 
-\apiitem{bool {\ce supports} (const std::string \&feature)}
+\apiitem{int {\ce supports} (string_view feature)}
 \label{sec:inputsupportsfeaturelist}
-Given the name of a \emph{feature}, tells if this \ImageInput 
-instance supports that feature.  The following features are recognized
-by this query:
+Given the name of a \emph{feature}, tells if this \ImageInput  instance
+supports that feature. Most queries will simply return 0 for ``doesn't
+support the feature'' and nonzero for ``supports the feature,'' but it is
+acceptable to have queries return other nonzero integers to indicate varying
+degrees of support or limits (but those queries should be clearly documented
+as such). The following features are recognized by this query:
 \begin{description}
 \item[\spc] \spc
-\item[\rm ] No queries supported at this time.
-\end{description}
+\item[\rm \qkw{arbitrary_metadata}] Does the image file format allow
+  metadata with arbitrary names (and either arbitrary, or a reasonable set
+  of, data types)? (Versus the file format supporting only a fixed list of
+  specific metadata names/values?
+\item[\rm \qkw{exif}] Does the image file format support Exif camera data
+  (either specifically, or via arbitrary named metadata)?
+\item[\rm \qkw{iptc}] Does the image file format support IPTC data
+  (either specifically, or via arbitrary named metadata)?
+  \end{description}
 \apiend
 
 \apiitem{bool {\ce valid_file} (const std::string \&filename) const}
@@ -974,7 +995,8 @@ in its native format (including per-channel formats, if applicable).
 The stride values
 give the data spacing of adjacent pixels, scanlines, and volumetric
 slices, respectively (measured in bytes).  Strides set to the special
-value of {\kw AutoStride} imply contiguous data, i.e., \\
+value of {\kw AutoStride} imply contiguous data in the shape of a full tile,
+i.e., \\
 \spc {\kw xstride} $=$ {\kw spec.nchannels * spec.pixel_size()} \\
 \spc {\kw ystride} $=$ {\kw xstride * spec.tile_width} \\
 \spc {\kw zstride} $=$ {\kw ystride * spec.tile_height} \\
@@ -1017,10 +1039,11 @@ in its native format (including per-channel formats, if applicable).
 The stride values
 give the data spacing of adjacent pixels, scanlines, and volumetric
 slices, respectively (measured in bytes).  Strides set to the special
-value of {\kw AutoStride} imply contiguous data, i.e., \\
+value of {\kw AutoStride} imply contiguous data in the shape of
+the region specified, i.e., \\
 \spc {\kw xstride} $=$ {\kw spec.nchannels * spec.pixel_size()} \\
-\spc {\kw ystride} $=$ {\kw xstride * spec.tile_width} \\
-\spc {\kw zstride} $=$ {\kw ystride * spec.tile_height} \\
+\spc {\kw ystride} $=$ {\kw xstride * (xend - xbegin)} \\
+\spc {\kw zstride} $=$ {\kw ystride * (yend - ybegin)} \\
 The \ImageInput is expected to give the appearance of random access
 --- in other words, if it can't randomly seek to the given tile, it
 should transparently close, reopen, and sequentially read through prior

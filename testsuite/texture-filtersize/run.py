@@ -1,4 +1,4 @@
-#!/usr/bin/python 
+#!/usr/bin/env python
 
 # This test verifies that the TextureSystem is sampling the correct
 # MIPmap levels given the input derivatives.

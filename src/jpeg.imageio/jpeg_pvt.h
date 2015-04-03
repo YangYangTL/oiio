@@ -51,6 +51,17 @@ OIIO_PLUGIN_NAMESPACE_BEGIN
 #define ICC_HEADER_SIZE 14
 #define ICC_PROFILE_ATTR "ICCProfile"
 
+// Chroma sub-sampling values for jpeg_compress_struct / jpeg_component_info
+#define JPEG_SUBSAMPLING_ATTR "jpeg:subsampling"
+#define JPEG_444_STR "4:4:4"
+#define JPEG_422_STR "4:2:2"
+#define JPEG_420_STR "4:2:0"
+#define JPEG_411_STR "4:1:1"
+
+static const int JPEG_444_COMP[6] = {1,1, 1,1, 1,1};
+static const int JPEG_422_COMP[6] = {2,1, 1,1, 1,1};
+static const int JPEG_420_COMP[6] = {2,2, 1,1, 1,1};
+static const int JPEG_411_COMP[6] = {4,1, 1,1, 1,1};
 
 
 class JpgInput : public ImageInput {
@@ -58,6 +69,10 @@ class JpgInput : public ImageInput {
     JpgInput () { init(); }
     virtual ~JpgInput () { close(); }
     virtual const char * format_name (void) const { return "jpeg"; }
+    virtual int supports (string_view feature) {
+        return (feature == "exif"
+             || feature == "iptc");
+    }
     virtual bool valid_file (const std::string &filename) const;
     virtual bool open (const std::string &name, ImageSpec &spec);
     virtual bool open (const std::string &name, ImageSpec &spec,
@@ -81,14 +96,17 @@ class JpgInput : public ImageInput {
     std::string m_filename;
     int m_next_scanline;      // Which scanline is the next to read?
     bool m_raw;               // Read raw coefficients, not scanlines
+    bool m_cmyk;              // The input file is cmyk
     bool m_fatalerr;          // JPEG reader hit a fatal error
     struct jpeg_decompress_struct m_cinfo;
     my_error_mgr m_jerr;
     jvirt_barray_ptr *m_coeffs;
+    std::vector<unsigned char> m_cmyk_buf; // For CMYK translation
 
     void init () {
         m_fd = NULL;
         m_raw = false;
+        m_cmyk = false;
         m_fatalerr = false;
         m_coeffs = NULL;
         m_jerr.jpginput = this;

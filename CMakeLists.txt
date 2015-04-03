@@ -2,8 +2,8 @@ project (OpenImageIO)
 
 # Release version of the library
 set (OIIO_VERSION_MAJOR 1)
-set (OIIO_VERSION_MINOR 5)
-set (OIIO_VERSION_PATCH 5)
+set (OIIO_VERSION_MINOR 6)
+set (OIIO_VERSION_PATCH 3)
 set (OIIO_VERSION_RELEASE_TYPE "dev")   # "dev", "betaX", "RCY", ""
 
 cmake_minimum_required (VERSION 2.6)
@@ -91,7 +91,7 @@ endif ()
 if (CMAKE_COMPILER_IS_GNUCC AND (NOT CMAKE_COMPILER_IS_CLANG) AND (NOT ${GCC_VERSION} VERSION_LESS 4.8))
     # suppress a warning that Boost::Python hits in g++ 4.8
     add_definitions ("-Wno-error=unused-local-typedefs")
-    add_definitions ("-Wunused-local-typedefs")
+    add_definitions ("-Wno-unused-local-typedefs")
 endif ()
 
 if (CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_GNUCC)
@@ -120,12 +120,13 @@ set (USE_OPENGL ON CACHE BOOL "Include OpenGL support")
 set (USE_QT ON CACHE BOOL "Include Qt support")
 set (FORCE_OPENGL_1 OFF CACHE BOOL "Force iv to use OpenGL's fixed pipeline")
 set (USE_PYTHON ON CACHE BOOL "Build the Python bindings")
+set (USE_PYTHON3 OFF CACHE BOOL "Build the Python3 bindings")
 set (USE_FIELD3D ON CACHE BOOL "Use Field3D if found")
 set (USE_FFMPEG ON CACHE BOOL "Use FFmpeg if found")
 set (USE_OPENJPEG ON CACHE BOOL "Use OpenJpeg if found")
 set (USE_OCIO ON CACHE BOOL "Use OpenColorIO for color management if found")
 set (USE_OPENCV ON CACHE BOOL "Use OpenCV if found")
-set (USE_OPENSSL ON CACHE BOOL "Use OpenSSL if found")
+set (USE_OPENSSL OFF CACHE BOOL "Use OpenSSL if found (for faster SHA-1)")
 set (USE_FREETYPE ON CACHE BOOL "Use Freetype if found")
 set (USE_GIF ON CACHE BOOL "Use GIF if found")
 set (USE_LIBRAW ON CACHE BOOL "Use LibRaw if found")
@@ -133,6 +134,10 @@ set (LIBRAW_PATH "" CACHE STRING "Custom LibRaw path")
 set (NOTHREADS OFF CACHE BOOL "Compile with no threads or locking")
 set (OIIO_THREAD_ALLOW_DCLP ON CACHE BOOL "OIIO threads may use DCLP for speed")
 set (PYTHON_VERSION 2.6)
+set (PYTHON3_VERSION 3.2)
+set (USE_NUKE ON CACHE BOOL "Build Nuke plugins, if Nuke is found")
+set (Nuke_ROOT "" CACHE STRING "Where to find Nuke installation")
+set (NUKE_VERSION 7.0)
 set (USE_EXTERNAL_PUGIXML OFF CACHE BOOL
      "Use an externally built shared library version of the pugixml library")
 set (PUGIXML_HOME "" CACHE STRING "Hint about where to find external PugiXML library")
@@ -152,6 +157,7 @@ if (BUILDSTATIC AND ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
     # On Linux, the lack of -fPIC when building static libraries seems
     # incompatible with the dynamic library needed for the Python bindings.
     set (USE_PYTHON OFF)
+    set (USE_PYTHON3 OFF)
 endif()
 
 if (NOTHREADS)
@@ -191,7 +197,7 @@ if (NOT USE_SIMD STREQUAL "")
         add_definitions ("-DOIIO_NO_SSE=1")
     else ()
         if (MSVC OR CMAKE_COMPILER_IS_INTEL)
-            add_definitions ("/arch:{USE_SIMD}")
+            add_definitions ("/arch:${USE_SIMD}")
         else ()
             add_definitions ("-m${USE_SIMD}")
         endif ()
@@ -235,6 +241,7 @@ if (UNIX AND NOT SELF_CONTAINED_INSTALL_TREE)
     # the "standard" unix directory heirarchy
     # TODO: Figure out how to get the correct python directory
     set (DEFAULT_PYLIB_INSTALL_DIR "lib/python/site-packages")
+    set (DEFAULT_PYLIB3_INSTALL_DIR "lib/python3/site-packages")
     set (DEFAULT_DOC_INSTALL_DIR "share/doc/OpenImageIO")
     set (DEFAULT_MAN_INSTALL_DIR "share/man/man1")
 else ()
@@ -242,6 +249,7 @@ else ()
     # that everything OIIO related will go into its own directory, not into
     # some standard system heirarchy.
     set (DEFAULT_PYLIB_INSTALL_DIR "python")
+    set (DEFAULT_PYLIB3_INSTALL_DIR "python3")
     set (DEFAULT_DOC_INSTALL_DIR "doc")
     set (DEFAULT_MAN_INSTALL_DIR "doc/man")
 endif ()
@@ -250,6 +258,7 @@ if (EXEC_INSTALL_PREFIX)
     set (DEFAULT_BIN_INSTALL_DIR   "${EXEC_INSTALL_PREFIX}/${DEFAULT_BIN_INSTALL_DIR}")
     set (DEFAULT_LIB_INSTALL_DIR   "${EXEC_INSTALL_PREFIX}/${DEFAULT_LIB_INSTALL_DIR}")
     set (DEFAULT_PYLIB_INSTALL_DIR "${EXEC_INSTALL_PREFIX}/${DEFAULT_PYLIB_INSTALL_DIR}")
+    set (DEFAULT_PYLIB3_INSTALL_DIR "${EXEC_INSTALL_PREFIX}/${DEFAULT_PYLIB3_INSTALL_DIR}")
 endif ()
 # Set up cmake cache variables corresponding to the defaults deduced above, so
 # that the user can override them as desired:
@@ -259,6 +268,8 @@ set (LIB_INSTALL_DIR ${DEFAULT_LIB_INSTALL_DIR} CACHE STRING
      "Install location for libraries (relative to CMAKE_INSTALL_PREFIX or absolute)")
 set (PYLIB_INSTALL_DIR ${DEFAULT_PYLIB_INSTALL_DIR} CACHE STRING
      "Install location for python libraries (relative to CMAKE_INSTALL_PREFIX or absolute)")
+set (PYLIB3_INSTALL_DIR ${DEFAULT_PYLIB3_INSTALL_DIR} CACHE STRING
+     "Install location for python3 libraries (relative to CMAKE_INSTALL_PREFIX or absolute)")
 set (INCLUDE_INSTALL_DIR ${DEFAULT_INCLUDE_INSTALL_DIR} CACHE STRING
      "Install location of header files (relative to CMAKE_INSTALL_PREFIX or absolute)")
 set (DOC_INSTALL_DIR ${DEFAULT_DOC_INSTALL_DIR} CACHE STRING
@@ -267,6 +278,7 @@ if (UNIX)
     set (MAN_INSTALL_DIR ${DEFAULT_MAN_INSTALL_DIR} CACHE STRING
          "Install location for manual pages (relative to CMAKE_INSTALL_PREFIX or absolute)")
 endif()
+set (PLUGIN_SEARCH_PATH "" CACHE STRING "Default plugin search path")
 
 set (INSTALL_DOCS ON CACHE BOOL "Install documentation")
 
@@ -364,23 +376,29 @@ endif ()
 if (USE_PYTHON AND oiio_boost_PYTHON_FOUND AND NOT BUILD_OIIOUTIL_ONLY)
     add_subdirectory (src/python)
 endif ()
+if (USE_PYTHON3 AND NOT BUILD_OIIOUTIL_ONLY)
+    #build the python3 module in a different binary directory since it will
+    #have the same name as the python2 module (e.g. OpenImageIO.so)
+    add_subdirectory (src/python src/python3)
+endif ()
 
 add_subdirectory (src/include)
 add_subdirectory (src/doc)
+add_subdirectory (src/nuke)
 
 
 #########################################################################
 # Testing
-# 
+#
 # Just call oiio_add_tests(testname...) for each test.  Additional
 # optional arguments include:
 #     FOUNDVAR   specifies the name of a CMAKE variable; if not defined,
 #                    the test will not be added for 'make test' (helpful
 #                    for excluding tests for libraries not found).
 #     IMAGEDIR   specifies a directory for test images, one level higher
-#                    than where the oiio top level source lives -- a 
+#                    than where the oiio top level source lives -- a
 #                    message will be printed if not found.
-#     URL        URL where the test images can be found, will be 
+#     URL        URL where the test images can be found, will be
 #                    incorporated into the error message if the test
 #                    image directory is not found.
 #     LABEL      If set to "broken", will designate the test as one
@@ -396,8 +414,8 @@ endif()
 
 # List all the individual testsuite tests here:
 oiio_add_tests (gpsread misnamed-file nonwhole-tiles
-                oiiotool oiiotool-composite oiiotool-fixnan
-                oiiotool-readerror oiiotool-text
+                oiiotool oiiotool-composite oiiotool-deep oiiotool-fixnan
+                oiiotool-pattern oiiotool-readerror oiiotool-text
                 perchannel dither
                 dpx ico iff png psd rla sgi
                 python-typedesc python-imagespec python-roi
@@ -406,7 +424,11 @@ oiio_add_tests (gpsread misnamed-file nonwhole-tiles
                 maketx
                 texture-blurtube texture-crop texture-cropover
                 texture-derivs texture-fill texture-filtersize
+                texture-interp-bicubic
+                texture-interp-bilinear
+                texture-interp-closest
                 texture-gray texture-grid
+                texture-mip-nomip texture-mip-onelevel texture-mip-trilinear
                 texture-missing texture-overscan
                 texture-pointsample texture-width0blur texture-res
                 texture-skinny texture-fat texture-wrapfill

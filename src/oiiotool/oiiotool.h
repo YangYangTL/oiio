@@ -60,6 +60,7 @@ public:
     bool hash;
     bool updatemode;
     bool autoorient;
+    bool nativeread;                  // force native data type reads
     int threads;
     std::string full_command_line;
     std::string printinfo_metamatch;
@@ -107,7 +108,9 @@ public:
 
     void clear_options ();
 
-    // Force img to be read at this point.
+    /// Force img to be read at this point.  Use this wrapper, don't directly
+    /// call img->read(), because there's extra work done here specific to
+    /// oiiotool.
     bool read (ImageRecRef img);
     // Read the current image
     bool read () {
@@ -163,6 +166,17 @@ public:
                           int &w, int &h, int &x, int &y, const char *geom,
                           bool allow_scaling=false);
 
+    // Expand substitution expressions in string str. Expressions are
+    // enclosed in braces: {...}. An expression consists of:
+    //   * a numeric constant ("42" or "3.14")
+    //   * a parenthesized expression ("(expr)")
+    //   * IMG[n].metadata for the metadata of an image. The 'n' may be an
+    //     image name, or an integer giving stack position (for example,
+    //     "IMG[0]" is the top of the stack; also "TOP" is a synonym). The
+    //     metadata can be any of the usual named metadata from the image's
+    //     spec, such as "width", "ImageDescription", etc.
+    string_view express (string_view str);
+
     void error (string_view command, string_view explanation="");
     void warning (string_view command, string_view explanation="");
 
@@ -170,6 +184,8 @@ private:
     CallbackFunction m_pending_callback;
     int m_pending_argc;
     const char *m_pending_argv[4];
+
+    std::string express_impl (string_view s);
 };
 
 
@@ -284,7 +300,7 @@ public:
     // it's lazily kept as name only, without reading the file.)
     bool elaborated () const { return m_elaborated; }
 
-    bool read ();
+    bool read (bool force_native_read=false);
 
     // ir(subimg,mip) references a specific MIP level of a subimage
     // ir(subimg) references the first MIP level of a subimage
@@ -387,8 +403,8 @@ bool print_info (Oiiotool &ot, const std::string &filename,
 // (look at the string and try to discern whether it's an int, float, or
 // string).  If the 'value' string is empty, it will delete the
 // attribute.
-bool set_attribute (ImageRecRef img, const std::string &attribname,
-                    TypeDesc type, const std::string &value);
+bool set_attribute (ImageRecRef img, string_view attribname,
+                    TypeDesc type, string_view value);
 
 inline bool same_size (const ImageBuf &A, const ImageBuf &B)
 {

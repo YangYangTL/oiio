@@ -68,6 +68,32 @@ OIIO_CHECK_SIMD_EQUAL_impl (const X& x, const Y& y,
 
 
 template<typename VEC>
+void test_loadstore ()
+{
+    typedef typename VEC::value_t ELEM;
+    std::cout << "test_loadstore " << VEC::type_name() << "\n";
+    VEC C1234 (1, 2, 3, 4);
+    // VEC C0 (0);
+    ELEM partial[4] = { 101, 102, 103, 104 };
+    for (int i = 1; i <= 4; ++i) {
+        VEC a (ELEM(0));
+        a.load (partial, i);
+        for (int j = 0; j < 4; ++j)
+            OIIO_CHECK_EQUAL (a[j], j<i ? partial[j] : ELEM(0));
+        std::cout << "  partial load " << i << " : " << a << "\n";
+        ELEM stored[4] = { 0, 0, 0, 0 };
+        C1234.store (stored, i);
+        for (int j = 0; j < 4; ++j)
+            OIIO_CHECK_EQUAL (stored[j], j<i ? ELEM(j+1) : ELEM(0));
+        std::cout << "  partial store " << i << " : " 
+                  << stored[0] << ' ' << stored[1] << ' '
+                  << stored[2] << ' ' << stored[3] << "\n";
+    }
+}
+
+
+
+template<typename VEC>
 void test_component_access ()
 {
     typedef typename VEC::value_t ELEM;
@@ -82,6 +108,10 @@ void test_component_access ()
     OIIO_CHECK_EQUAL (extract<1>(a), 1);
     OIIO_CHECK_EQUAL (extract<2>(a), 2);
     OIIO_CHECK_EQUAL (extract<3>(a), 3);
+    OIIO_CHECK_SIMD_EQUAL (insert<0>(a, ELEM(42)), VEC(42,1,2,3));
+    OIIO_CHECK_SIMD_EQUAL (insert<1>(a, ELEM(42)), VEC(0,42,2,3));
+    OIIO_CHECK_SIMD_EQUAL (insert<2>(a, ELEM(42)), VEC(0,1,42,3));
+    OIIO_CHECK_SIMD_EQUAL (insert<3>(a, ELEM(42)), VEC(0,1,2,42));
 
     const ELEM vals[4] = { 0, 1, 2, 3 };
     VEC b (vals);
@@ -110,6 +140,7 @@ void test_arithmetic ()
     OIIO_CHECK_SIMD_EQUAL (a*b, VEC(10,22,36,52));
     OIIO_CHECK_SIMD_EQUAL (a/b, VEC(a[0]/b[0],a[1]/b[1],a[2]/b[2],a[3]/b[3]));
     OIIO_CHECK_EQUAL (reduce_add(b), ELEM(10));
+    OIIO_CHECK_SIMD_EQUAL (vreduce_add(b), VEC(ELEM(10)));
 }
 
 
@@ -147,6 +178,45 @@ void test_shuffle ()
 
 
 template<typename VEC>
+void test_swizzle ()
+{
+    typedef typename VEC::value_t ELEM;
+    std::cout << "test_swizzle " << VEC::type_name() << "\n";
+
+    VEC a (0, 1, 2, 3);
+    VEC b (10, 11, 12, 13);
+    OIIO_CHECK_SIMD_EQUAL (AxyBxy(a,b), VEC(0,1,10,11));
+    OIIO_CHECK_SIMD_EQUAL (AxBxAyBy(a,b), VEC(0,10,1,11));
+    OIIO_CHECK_SIMD_EQUAL (b.xyz0(), VEC(10,11,12,0));
+}
+
+
+
+template<typename VEC>
+void test_blend ()
+{
+    typedef typename VEC::value_t ELEM;
+    std::cout << "test_blend " << VEC::type_name() << "\n";
+
+    VEC a (1, 2, 3, 4);
+    VEC b (10, 11, 12, 13);
+
+    OIIO_CHECK_SIMD_EQUAL (blend (a, b, mask4(false,false,false,false)), a);
+    OIIO_CHECK_SIMD_EQUAL (blend (a, b, mask4(true,true,true,true)), b);
+    OIIO_CHECK_SIMD_EQUAL (blend (a, b, mask4(true,false,true,false)), VEC (10, 2, 12, 4));
+
+    OIIO_CHECK_SIMD_EQUAL (blend0 (a, mask4(false,false,false,false)), VEC(0,0,0,0));
+    OIIO_CHECK_SIMD_EQUAL (blend0 (a, mask4(true,true,true,true)), a);
+    OIIO_CHECK_SIMD_EQUAL (blend0 (a, mask4(true,false,true,false)), VEC (1, 0, 3, 0));
+
+    OIIO_CHECK_SIMD_EQUAL (blend0not (a, mask4(false,false,false,false)), a);
+    OIIO_CHECK_SIMD_EQUAL (blend0not (a, mask4(true,true,true,true)), VEC(0,0,0,0));
+    OIIO_CHECK_SIMD_EQUAL (blend0not (a, mask4(true,false,true,false)), VEC (0, 2, 0, 4));
+}
+
+
+
+template<typename VEC>
 void test_transpose ()
 {
     typedef typename VEC::value_t ELEM;
@@ -156,6 +226,9 @@ void test_transpose ()
     VEC b (4, 5, 6, 7);
     VEC c (8, 9, 10, 11);
     VEC d (12, 13, 14, 15);
+
+    OIIO_CHECK_SIMD_EQUAL (AxBxCxDx(a,b,c,d), VEC(0,4,8,12));
+
     std::cout << " before transpose:\n";
     std::cout << "\t" << a << "\n";
     std::cout << "\t" << b << "\n";
@@ -193,6 +266,29 @@ void test_shift ()
                                              unsigned(c)>>4, unsigned(d)>>4));
     std::cout << Strutil::format ("  [%x] >>  4 == [%x]\n", hard, hard>>4);
     std::cout << Strutil::format ("  [%x] srl 4 == [%x]\n", hard, srl(hard,4));
+
+    i = int4(1,2,4,8);
+    i <<= 1;
+    OIIO_CHECK_SIMD_EQUAL (i, int4(2,4,8,16));
+    i = int4(1,2,4,8);
+    i >>= 1;
+    OIIO_CHECK_SIMD_EQUAL (i, int4(0,1,2,4));
+}
+
+
+
+template<typename VEC>
+void test_vectorops ()
+{
+    typedef typename VEC::value_t ELEM;
+    std::cout << "test_vectorops " << VEC::type_name() << "\n";
+
+    VEC a (10, 11, 12, 13);
+    VEC b (1, 2, 3, 4);
+    OIIO_CHECK_EQUAL (dot(a,b), ELEM(10+22+36+52));
+    OIIO_CHECK_EQUAL (dot3(a,b), ELEM(10+22+36));
+    OIIO_CHECK_SIMD_EQUAL (vdot(a,b), VEC(10+22+36+52));
+    OIIO_CHECK_SIMD_EQUAL (vdot3(a,b), VEC(10+22+36));
 }
 
 
@@ -208,17 +304,24 @@ main (int argc, char *argv[])
 #endif
 
     std::cout << "\n";
+    test_loadstore<float4> ();
     test_component_access<float4> ();
     test_arithmetic<float4> ();
-    // FIXME - implement float comparisons
+    test_comparisons<float4> ();
     test_shuffle<float4> ();
+    test_swizzle<float4> ();
+    test_blend<float4> ();
     test_transpose<float4> ();
+    test_vectorops<float4> ();
 
     std::cout << "\n";
+    test_loadstore<int4> ();
     test_component_access<int4> ();
     test_arithmetic<int4> ();
     test_comparisons<int4> ();
     test_shuffle<int4> ();
+    test_swizzle<float4> ();
+    test_blend<int4> ();
     test_transpose<int4> ();
     test_shift ();
 

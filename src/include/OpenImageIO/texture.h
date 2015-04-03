@@ -355,12 +355,28 @@ public:
 
     /// Define an opaque data type that allows us to have a pointer
     /// to certain per-thread information that the TextureSystem maintains.
+    /// Any given one of these should NEVER be shared between running
+    /// threads.
     class Perthread;
 
-    /// Retrieve an opaque handle for per-thread info, to be used for
-    /// get_texture_handle and the texture routines that take handles
-    /// directly.
-    virtual Perthread * get_perthread_info () = 0;
+    /// Retrieve a Perthread, unique to the calling thread. This is a
+    /// thread-specific pointer that will always return the Perthread for a
+    /// thread, which will also be automatically destroyed when the thread
+    /// terminates.
+    ///
+    /// Applications that want to manage their own Perthread pointers (with
+    /// create_thread_info and destroy_thread_info) should still call this,
+    /// but passing in their managed pointer. If the passed-in threadinfo is
+    /// not NULL, it won't create a new one or retrieve a TSP, but it will
+    /// do other necessary housekeeping on the Perthread information.
+    virtual Perthread * get_perthread_info (Perthread *thread_info=NULL) = 0;
+
+    /// Create a new Perthread. It is the caller's responsibility to
+    /// eventually destroy it using destroy_thread_info().
+    virtual Perthread * create_thread_info () = 0;
+
+    /// Destroy a Perthread that was allocated by create_thread_info().
+    virtual void destroy_thread_info (Perthread *threadinfo) = 0;
 
     /// Define an opaque data type that allows us to have a handle to a
     /// texture (already having its name resolved) but without exposing
@@ -368,11 +384,16 @@ public:
     class TextureHandle;
 
     /// Retrieve an opaque handle for fast texture lookups.  The opaque
-    /// point thread_info is thread-specific information returned by
+    /// pointer thread_info is thread-specific information returned by
     /// get_perthread_info().  Return NULL if something has gone
     /// horribly wrong.
     virtual TextureHandle * get_texture_handle (ustring filename,
                                             Perthread *thread_info=NULL) = 0;
+
+    /// Return true if the texture handle (previously returned by
+    /// get_texture_handle()) is a valid texture that can be subsequently
+    /// read or sampled.
+    virtual bool good (TextureHandle *texture_handle) = 0;
 
     /// Filtered 2D texture lookup for a single point.
     ///
@@ -562,6 +583,12 @@ public:
     /// doesn't match the type requested. or some other failure.
     virtual bool get_texture_info (ustring filename, int subimage,
                           ustring dataname, TypeDesc datatype, void *data) = 0;
+    virtual bool get_texture_info (TextureHandle *texture_handle,
+                          Perthread *thread_info, int subimage,
+                          ustring dataname, TypeDesc datatype, void *data) = 0;
+    /// DEPRECATED (1.6.2)
+    virtual bool get_texture_info (TextureHandle *texture_handle, int subimage,
+                          ustring dataname, TypeDesc datatype, void *data) = 0;
 
     /// Get the ImageSpec associated with the named texture
     /// (specifically, the first MIP-map level).  If the file is found
@@ -570,6 +597,9 @@ public:
     /// was not found or could not be opened as an image file by any
     /// available ImageIO plugin.
     virtual bool get_imagespec (ustring filename, int subimage,
+                                ImageSpec &spec) = 0;
+    virtual bool get_imagespec (TextureHandle *texture_handle,
+                                Perthread *thread_info, int subimage,
                                 ImageSpec &spec) = 0;
 
     /// Return a pointer to an ImageSpec associated with the named
@@ -585,6 +615,9 @@ public:
     /// calls invalidate() on the file, or invalidate_all(), or destroys
     /// the TextureSystem.
     virtual const ImageSpec *imagespec (ustring filename, int subimage=0) = 0;
+    virtual const ImageSpec *imagespec (TextureHandle *texture_handle,
+                                        Perthread *thread_info = NULL,
+                                        int subimage=0) = 0;
 
     /// Retrieve the rectangle of raw unfiltered texels spanning
     /// [xbegin..xend) X [ybegin..yend) X [zbegin..zend), with
@@ -601,6 +634,12 @@ public:
     /// Return true if the file is found and could be opened by an
     /// available ImageIO plugin, otherwise return false.
     virtual bool get_texels (ustring filename, TextureOpt &options,
+                             int miplevel, int xbegin, int xend,
+                             int ybegin, int yend, int zbegin, int zend,
+                             int chbegin, int chend,
+                             TypeDesc format, void *result) = 0;
+    virtual bool get_texels (TextureHandle *texture_handle,
+                             Perthread *thread_info, TextureOpt &options,
                              int miplevel, int xbegin, int xend,
                              int ybegin, int yend, int zbegin, int zend,
                              int chbegin, int chend,

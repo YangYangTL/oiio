@@ -53,8 +53,10 @@ public:
     DPXOutput ();
     virtual ~DPXOutput ();
     virtual const char * format_name (void) const { return "dpx"; }
-    virtual bool supports (const std::string &feature) const {
+    virtual int supports (string_view feature) const {
         if (feature == "multiimage"
+            || feature == "alpha"
+            || feature == "nchannels"
             || feature == "random_access"
             || feature == "rewrite"
             || feature == "displaywindow"

@@ -74,7 +74,7 @@ public:
     TIFFOutput ();
     virtual ~TIFFOutput ();
     virtual const char * format_name (void) const { return "tiff"; }
-    virtual bool supports (const std::string &feature) const;
+    virtual int supports (string_view feature) const;
     virtual bool open (const std::string &name, const ImageSpec &spec,
                        OpenMode mode=Create);
     virtual bool close ();
@@ -146,8 +146,8 @@ TIFFOutput::~TIFFOutput ()
 
 
 
-bool
-TIFFOutput::supports (const std::string &feature) const
+int
+TIFFOutput::supports (string_view feature) const
 {
     if (feature == "tiles")
         return true;
@@ -155,14 +155,23 @@ TIFFOutput::supports (const std::string &feature) const
         return true;
     if (feature == "appendsubimage")
         return true;
+    if (feature == "alpha")
+        return true;
+    if (feature == "nchannels")
+        return true;
     if (feature == "displaywindow")
         return true;
     if (feature == "origin")
         return true;
     // N.B. TIFF doesn't support "negativeorigin"
+    if (feature == "exif")
+        return true;
+    if (feature == "iptc")
+        return true;
 
     // FIXME: we could support "volumes" and "empty"
 
+    // Everything else, we either don't support or don't know about
     // Everything else, we either don't support or don't know about
     return false;
 }
@@ -253,9 +262,27 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
         bps = 16;
         sampformat = SAMPLEFORMAT_UINT;
         break;
+    case TypeDesc::INT32:
+        bps = 32;
+        sampformat = SAMPLEFORMAT_INT;
+        break;
+    case TypeDesc::UINT32:
+        bps = 32;
+        sampformat = SAMPLEFORMAT_UINT;
+        break;
     case TypeDesc::HALF:
+#if 0
+        // Silently change requests for unsupported 'half' to 'float'
+        // Unfortunately, Nuke 9.0, and probably many other apps we care
+        // about, cannot read 16 bit float TIFFs correctly. Revisit this
+        // again in future releases. (comment added Feb 2015)
+        bps = 16;
+        sampformat = SAMPLEFORMAT_IEEEFP;
+        break;
+#else
         // Silently change requests for unsupported 'half' to 'float'
         m_spec.set_format (TypeDesc::FLOAT);
+#endif
     case TypeDesc::FLOAT:
         bps = 32;
         sampformat = SAMPLEFORMAT_IEEEFP;
@@ -293,7 +320,7 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
 
     // Default to LZW compression if no request came with the user spec
     if (! m_spec.find_attribute("compression"))
-        m_spec.attribute ("compression", "lzw");
+        m_spec.attribute ("compression", "zip");
 
     ImageIOParameter *param;
     const char *str = NULL;
@@ -337,6 +364,20 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
 
     if (Strutil::iequals (m_spec.get_string_attribute ("oiio:ColorSpace"), "sRGB"))
         m_spec.attribute ("Exif:ColorSpace", 1);
+
+    // Deal with all other params
+    // that contradicts them.
+    float X_density = m_spec.get_float_attribute ("XResolution", 1.0f);
+    float Y_density = m_spec.get_float_attribute ("YResolution", 1.0f);
+    float aspect = m_spec.get_float_attribute ("PixelAspectRatio", 1.0f);
+    if (X_density < 1.0f || Y_density < 1.0f || aspect*X_density != Y_density) {
+        if (X_density < 1.0f || Y_density < 1.0f) {
+            X_density = Y_density = 1.0f;
+            m_spec.attribute ("ResolutionUnit", "none");
+        }
+        m_spec.attribute ("XResolution", X_density);
+        m_spec.attribute ("YResolution", X_density * aspect);
+    }
 
     // Deal with all other params
     for (size_t p = 0;  p < m_spec.extra_attribs.size();  ++p)

@@ -93,6 +93,7 @@ Oiiotool::clear_options ()
     hash = false;
     updatemode = false;
     autoorient = false;
+    nativeread = false;
     threads = 0;
     full_command_line.clear ();
     printinfo_metamatch.clear ();
@@ -140,8 +141,6 @@ format_resolution (int w, int h, int d, int x, int y, int z)
 
 
 // FIXME -- lots of things we skimped on so far:
-// FIXME: check binary ops for compatible image dimensions
-// FIXME: handle missing image
 // FIXME: reject volume images?
 // FIXME: do all ops respect -a (or lack thereof?)
 
@@ -160,7 +159,7 @@ Oiiotool::read (ImageRecRef img)
     float pre_ic_time, post_ic_time;
     imagecache->getattribute ("stat:fileio_time", pre_ic_time);
     total_readtime.start ();
-    bool ok = img->read ();
+    bool ok = img->read (ot.nativeread);
     total_readtime.stop ();
     imagecache->getattribute ("stat:fileio_time", post_ic_time);
     total_imagecache_readtime += post_ic_time - pre_ic_time;
@@ -232,7 +231,7 @@ Oiiotool::error (string_view command, string_view explanation)
 {
     std::cerr << "oiiotool ERROR: " << command;
     if (explanation.length())
-        std::cerr << " (" << explanation << ")";
+        std::cerr << " : " << explanation;
     std::cerr << "\n";
     exit (-1);
 }
@@ -244,7 +243,7 @@ Oiiotool::warning (string_view command, string_view explanation)
 {
     std::cerr << "oiiotool WARNING: " << command;
     if (explanation.length())
-        std::cerr << " (" << explanation << ")";
+        std::cerr << " : " << explanation;
     std::cerr << "\n";
 }
 
@@ -288,10 +287,11 @@ static int
 set_dumpdata (int argc, const char *argv[])
 {
     ASSERT (argc == 1);
+    string_view command = ot.express (argv[0]);
     ot.dumpdata = true;
     std::map<std::string,std::string> options;
     options["empty"] = "1";
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     ot.dumpdata_showempty = Strutil::from_string<int> (options["empty"]);
     return 0;
 }
@@ -322,26 +322,42 @@ static int
 input_file (int argc, const char *argv[])
 {
     for (int i = 0;  i < argc;  i++) {
+        string_view filename = ot.express(argv[i]);
         std::map<std::string,ImageRecRef>::const_iterator found;
-        found = ot.image_labels.find(argv[0]);
+        found = ot.image_labels.find(filename);
         if (found != ot.image_labels.end()) {
             if (ot.verbose)
-                std::cout << "Referencing labeled image " << argv[0] << "\n";
+                std::cout << "Referencing labeled image " << filename << "\n";
             ot.push (found->second);
             ot.process_pending ();
             break;
         }
         Timer timer (ot.enable_function_timing);
         int exists = 1;
-        if (! ot.imagecache->get_image_info (ustring(argv[0]), 0, 0, 
+        // ustring filename (argv[i]);
+        if (! ot.imagecache->get_image_info (ustring(filename), 0, 0,
                             ustring("exists"), TypeDesc::TypeInt, &exists)
             || !exists) {
-            ot.error ("read", Strutil::format ("Could not open file \"%s\"", argv[0]));
+            // Try to get a more precise error message to report
+            if (! Filesystem::exists(filename))
+                ot.error ("read", Strutil::format ("File does not exist: \"%s\"", filename));
+            else {
+                std::string err;
+                ImageInput *in = ImageInput::open (filename);
+                if (in) {
+                    err = in->geterror();
+                    in->close ();
+                    delete in;
+                } else {
+                    err = OIIO::geterror();
+                }
+                ot.error ("read", err.size() ? err : "(unknown error)");
+            }
             exit (1);
         }
         if (ot.verbose)
-            std::cout << "Reading " << argv[0] << "\n";
-        ot.push (ImageRecRef (new ImageRec (argv[i], ot.imagecache)));
+            std::cout << "Reading " << filename << "\n";
+        ot.push (ImageRecRef (new ImageRec (filename, ot.imagecache)));
         if (ot.printinfo || ot.printstats || ot.dumpdata || ot.hash) {
             OiioTool::print_info_options pio;
             pio.verbose = ot.verbose;
@@ -354,7 +370,7 @@ input_file (int argc, const char *argv[])
             pio.nometamatch = ot.printinfo_nometamatch;
             long long totalsize = 0;
             std::string error;
-            bool ok = OiioTool::print_info (ot, argv[i], pio, totalsize, error);
+            bool ok = OiioTool::print_info (ot, filename, pio, totalsize, error);
             if (! ok)
                 ot.error ("read", error);
         }
@@ -375,7 +391,8 @@ input_file (int argc, const char *argv[])
 static int
 action_label (int argc, const char *argv[])
 {
-    ot.image_labels[argv[1]] = ot.curimg;
+    string_view labelname = ot.express(argv[1]);
+    ot.image_labels[labelname] = ot.curimg;
     return 0;
 }
 
@@ -396,6 +413,10 @@ string_to_dataformat (const std::string &s, TypeDesc &dataformat, int &bits)
         dataformat = TypeDesc::UINT16;  bits = 0;
     } else if (s == "int16") {
         dataformat = TypeDesc::INT16;   bits = 0;
+    } else if (s == "uint32") {
+        dataformat = TypeDesc::UINT32;  bits = 0;
+    } else if (s == "int32") {
+        dataformat = TypeDesc::INT32;   bits = 0;
     } else if (s == "half") {
         dataformat = TypeDesc::HALF;    bits = 0;
     } else if (s == "float") {
@@ -486,9 +507,11 @@ adjust_output_options (string_view filename,
         spec.attribute ("oiio:dither", h);
     }
 
-    // Make sure we kill any pixel value hash that may have been in the
-    // input.
+    // Make sure we kill any special hints that maketx adds and that will
+    // no longer be valid after whatever oiiotool operations we've done.
     spec.erase_attribute ("oiio:SHA-1");
+    spec.erase_attribute ("oiio:ConstantColor");
+    spec.erase_attribute ("oiio:AverageColor");
 }
 
 
@@ -517,26 +540,68 @@ DateTime_to_time_t (const char *datetime, time_t &timet)
 
 
 
+// For a comma-separated list of channel names (e.g., "B,G,R,A"), compute
+// the vector of integer indices for those channels as found in the spec
+// (e.g., {2,1,0,3}), using -1 for any channels whose names were not found
+// in the spec. Return true if all named channels were found, false if one
+// or more were not found.
+static bool
+parse_channels (const ImageSpec &spec, string_view chanlist,
+                std::vector<int> &channels)
+{
+    bool ok = true;
+    channels.clear ();
+    for (int c = 0; chanlist.length(); ++c) {
+        int chan = -1;
+        Strutil::skip_whitespace (chanlist);
+        string_view name = Strutil::parse_until (chanlist, ",");
+        if (name.size()) {
+            for (int i = 0;  i < spec.nchannels;  ++i)
+                if (spec.channelnames[i] == name) { // name of a known channel?
+                    chan = i;
+                    break;
+                }
+            if (chan < 0) { // Didn't find a match? Try case-insensitive.
+                for (int i = 0;  i < spec.nchannels;  ++i)
+                    if (Strutil::iequals (spec.channelnames[i], name)) {
+                        chan = i;
+                        break;
+                    }
+            }
+            if (chan < 0)
+                ok = false;
+            channels.push_back (chan);
+        }
+        if (! Strutil::parse_char (chanlist, ','))
+            break;
+    }
+    return ok;
+}
+
+
+
 static int
 output_file (int argc, const char *argv[])
 {
     ASSERT (argc == 2 && !strcmp(argv[0],"-o"));
     Timer timer (ot.enable_function_timing);
     ot.total_writetime.start();
-    std::string filename = argv[1];
+    string_view command = ot.express (argv[0]);
+    string_view filename = ot.express (argv[1]);
+
     if (! ot.curimg.get()) {
-        ot.warning ("output", filename + " did not have any current image to output.");
+        ot.warning (command, Strutil::format("%s did not have any current image to output.", filename));
         return 0;
     }
     if (ot.noclobber && Filesystem::exists(filename)) {
-        ot.warning ("output", filename + " already exists, not overwriting.");
+        ot.warning (command, Strutil::format("%s already exists, not overwriting.", filename));
         return 0;
     }
     if (ot.verbose)
-        std::cout << "Writing " << argv[1] << "\n";
+        std::cout << "Writing " << filename << "\n";
     ImageOutput *out = ImageOutput::create (filename.c_str());
     if (! out) {
-        ot.error ("output", OIIO::geterror());
+        ot.error (command, OIIO::geterror());
         return 0;
     }
     bool supports_displaywindow = out->supports ("displaywindow");
@@ -545,6 +610,23 @@ output_file (int argc, const char *argv[])
     ot.read ();
     ImageRecRef saveimg = ot.curimg;
     ImageRecRef ir (ot.curimg);
+
+    // Automatically drop channels we can't support in output
+    if ((ir->spec()->nchannels > 4 && ! out->supports("nchannels")) ||
+        (ir->spec()->nchannels > 3 && ! out->supports("alpha"))) {
+        bool alpha = (ir->spec()->nchannels > 3 && out->supports("alpha"));
+        string_view chanlist = alpha ? "R,G,B,A" : "R,G,B";
+        std::vector<int> channels;
+        bool found = parse_channels (*ir->spec(), chanlist, channels);
+        if (! found)
+            chanlist = alpha ? "0,1,2,3" : "0,1,2";
+        const char *argv[] = { "channels", chanlist.c_str() };
+        int action_channels (int argc, const char *argv[]); // forward decl
+        action_channels (2, argv);
+        ot.warning (command, Strutil::format("Can't save %d channels to %f... saving only %s",
+                                              ir->spec()->nchannels, out->format_name(), chanlist.c_str()));
+        ir = ot.curimg;
+    }
 
     // Handle --autotrim
     if (supports_displaywindow && ot.output_autotrim) {
@@ -617,12 +699,12 @@ output_file (int argc, const char *argv[])
     ImageOutput::OpenMode mode = ImageOutput::Create;
     if (ir->subimages() > 1 && out->supports("multiimage")) {
         if (! out->open (filename, ir->subimages(), &subimagespecs[0])) {
-            ot.error ("output", out->geterror());
+            ot.error (command, out->geterror());
             return 0;
         }
     } else {
         if (! out->open (filename, subimagespecs[0], mode)) {
-            ot.error ("output", out->geterror());
+            ot.error (command, out->geterror());
             return 0;
         }
     }
@@ -634,12 +716,12 @@ output_file (int argc, const char *argv[])
             adjust_output_options (filename, spec, ot, supports_tiles);
             if (s > 0 || m > 0) {  // already opened first subimage/level
                 if (! out->open (filename, spec, mode)) {
-                    ot.error ("output", out->geterror());
+                    ot.error (command, out->geterror());
                     return 0;
                 }
             }
             if (! (*ir)(s,m).write (out)) {
-                ot.error ("output", (*ir)(s,m).geterror());
+                ot.error (command, (*ir)(s,m).geterror());
                 return 0;
             }
             if (mend > 1) {
@@ -648,7 +730,7 @@ output_file (int argc, const char *argv[])
                 } else if (out->supports("multiimage")) {
                     mode = ImageOutput::AppendSubimage;
                 } else {
-                    ot.warning ("output", Strutil::format ("%s does not support MIP-maps for %s",
+                    ot.warning (command, Strutil::format ("%s does not support MIP-maps for %s",
                                                            out->format_name(), filename));
                     break;
                 }
@@ -656,7 +738,7 @@ output_file (int argc, const char *argv[])
         }
         mode = ImageOutput::AppendSubimage;  // for next subimage
         if (send > 1 && ! out->supports("multiimage")) {
-            ot.warning ("output", Strutil::format ("%s does not support multiple subimages for %s",
+            ot.warning (command, Strutil::format ("%s does not support multiple subimages for %s",
                                                    out->format_name(), filename));
             break;
         }
@@ -675,7 +757,7 @@ output_file (int argc, const char *argv[])
 
     ot.curimg = saveimg;
     ot.total_writetime.stop();
-    ot.function_times["output"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -685,8 +767,9 @@ static int
 set_dataformat (int argc, const char *argv[])
 {
     ASSERT (argc == 2);
+    string_view command = ot.express (argv[0]);
     std::vector<std::string> chans;
-    Strutil::split (argv[1], chans, ",");
+    Strutil::split (ot.express(argv[1]), chans, ",");
 
     if (chans.size() == 0) {
         return 0;   // Nothing to do
@@ -699,6 +782,8 @@ set_dataformat (int argc, const char *argv[])
         ot.output_bitspersample = 0;
         string_to_dataformat (chans[0], ot.output_dataformat,
                               ot.output_bitspersample);
+        if (ot.output_dataformat == TypeDesc::UNKNOWN)
+            ot.error (command, Strutil::format ("Unknown data format \"%s\"", chans[0]));
         ot.output_channelformats.clear ();
         return 0;  // we're done
     }
@@ -711,7 +796,7 @@ set_dataformat (int argc, const char *argv[])
             std::string channame (chans[i], 0, eq - chans[i].c_str());
             ot.output_channelformats[channame] = std::string (eq+1);
         } else {
-            ot.error (argv[0], Strutil::format ("Malformed format designator \"%s\"", chans[i]));
+            ot.error (command, Strutil::format ("Malformed format designator \"%s\"", chans[i]));
         }
     }
 
@@ -729,6 +814,7 @@ set_string_attribute (int argc, const char *argv[])
         return 0;
     }
     set_attribute (ot.curimg, argv[1], TypeDesc::TypeString, argv[2]);
+    // N.B. set_attribute does expression expansion on its args
     return 0;
 }
 
@@ -743,6 +829,7 @@ set_any_attribute (int argc, const char *argv[])
         return 0;
     }
     set_attribute (ot.curimg, argv[1], TypeDesc(TypeDesc::UNKNOWN), argv[2]);
+    // N.B. set_attribute does expression expansion on its args
     return 0;
 }
 
@@ -771,7 +858,8 @@ Oiiotool::adjust_geometry (string_view command,
                            int &w, int &h, int &x, int &y, const char *geom,
                            bool allow_scaling)
 {
-    float scale = 1.0f;
+    float scaleX = 1.0f;
+    float scaleY = 1.0f;
     int ww = w, hh = h;
     int xx = x, yy = y;
     int xmax, ymax;
@@ -780,7 +868,8 @@ Oiiotool::adjust_geometry (string_view command,
         y = yy;
         w = std::max (0, xmax-xx+1);
         h = std::max (0, ymax-yy+1);
-    } else if (sscanf (geom, "%dx%d%d%d", &ww, &hh, &xx, &yy) == 4) {
+    } else if (sscanf (geom, "%dx%d%d%d", &ww, &hh, &xx, &yy) == 4 ||
+               sscanf (geom, "%dx%d+%d+%d", &ww, &hh, &xx, &yy) == 4) {
         if (ww == 0 && h != 0)
             ww = int (hh * float(w)/float(h) + 0.5f);
         if (hh == 0 && w != 0)
@@ -796,33 +885,179 @@ Oiiotool::adjust_geometry (string_view command,
             hh = int (ww * float(h)/float(w) + 0.5f);
         w = ww;
         h = hh;
+    } else if (allow_scaling && sscanf (geom, "%f%%x%f%%", &scaleX, &scaleY) == 2) {
+        scaleX = std::max(0.0f, scaleX*0.01f);
+        scaleY = std::max(0.0f, scaleY*0.01f);
+        if (scaleX == 0 && scaleY != 0)
+            scaleX = scaleY;
+        if (scaleY == 0 && scaleX != 0)
+            scaleY = scaleX;
+        w = (int)(w * scaleX + 0.5f);
+        h = (int)(h * scaleY + 0.5f);
     } else if (sscanf (geom, "%d%d", &xx, &yy) == 2) {
         x = xx;
         y = yy;
-    } else if (allow_scaling && sscanf (geom, "%f%%", &scale) == 1) {
-        scale *= 0.01f;
-        w = (int)(w * scale + 0.5f);
-        h = (int)(h * scale + 0.5f);
-    } else if (allow_scaling && sscanf (geom, "%f", &scale) == 1) {
-        w = (int)(w * scale + 0.5f);
-        h = (int)(h * scale + 0.5f);
+    } else if (allow_scaling && sscanf (geom, "%f%%", &scaleX) == 1) {
+        scaleX *= 0.01f;
+        w = (int)(w * scaleX + 0.5f);
+        h = (int)(h * scaleX + 0.5f);
+    } else if (allow_scaling && sscanf (geom, "%f", &scaleX) == 1) {
+        w = (int)(w * scaleX + 0.5f);
+        h = (int)(h * scaleX + 0.5f);
     } else {
         error (command, Strutil::format ("Unrecognized geometry \"%s\"", geom));
         return false;
     }
-//    printf ("geom %dx%d, %+d%+d\n", w, h, x, y);
+    // printf ("geom %dx%d, %+d%+d\n", w, h, x, y);
     return true;
 }
 
 
 
-bool
-OiioTool::set_attribute (ImageRecRef img, const std::string &attribname,
-                         TypeDesc type, const std::string &value)
+// Expression evaluation and substitution for a single expression
+std::string
+Oiiotool::express_impl (string_view s)
 {
+    std::string result;
+    string_view orig = s;
+    char pending_op = 0;
+
+    // std::cout << "express_impl '" << s << "'\n";
+    while (s.size()) {
+        // std::cout << " In iter, result='" << result << "', s='" << s << "', pending=" << pending_op << "\n";
+        orig = s;
+        std::string r;
+        float floatval;
+        if (Strutil::starts_with(s,"TOP") || Strutil::starts_with (s, "IMG[")) {
+            // metadata substitution
+            ImageRecRef img;
+            if (Strutil::parse_prefix (s, "TOP")) {
+                img = curimg;
+            } else if (Strutil::parse_prefix (s, "IMG[")) {
+                int index = -1;
+                if (Strutil::parse_int (s, index) && Strutil::parse_char (s, ']')
+                      && index >= 0 && index <= (int)image_stack.size()) {
+                    if (index == 0)
+                        img = curimg;
+                    else
+                        img = image_stack[image_stack.size()-index];
+                } else {
+                    string_view name = Strutil::parse_until (s, "]");
+                    std::map<std::string,ImageRecRef>::const_iterator found;
+                    found = ot.image_labels.find(name);
+                    if (found != ot.image_labels.end())
+                        img = found->second;
+                    else
+                        img = ImageRecRef (new ImageRec (name, ot.imagecache));
+                    Strutil::parse_char (s, ']');
+                }
+            }
+            if (! img.get()) {
+                s = orig; break;  // Not a valid image
+            }
+            if (! Strutil::parse_char (s, '.')) {
+                s = orig; break;
+            }
+            string_view metadata = Strutil::parse_identifier (s);
+            if (metadata.size()) {
+                read (img);
+                ImageIOParameter tmpparam;
+                const ImageIOParameter *p = img->spec(0,0)->find_attribute (metadata, tmpparam);
+                if (p) {
+                    std::string val = ImageSpec::metadata_val (*p);
+                    if (p->type().basetype == TypeDesc::STRING) {
+                        // metadata_val returns strings double quoted, strip
+                        val.erase (0, 1);
+                        val.erase (val.size()-1, 1);
+                    }
+                    r = val;
+                }
+                else if (metadata == "filename")
+                    r = img->name();
+                else if (metadata == "file_extension")
+                    r = Filesystem::extension (img->name());
+                else if (metadata == "file_noextension") {
+                    std::string filename = img->name();
+                    std::string ext = Filesystem::extension (img->name());
+                    r = filename.substr (0, filename.size()-ext.size());
+                }
+            }
+        } else if (Strutil::parse_float (s, floatval)) {
+            r = Strutil::format ("%g", floatval);
+        }
+        if (pending_op) {
+            float a = Strutil::from_string<float>(result);
+            float b = Strutil::from_string<float>(r);
+            float val = 0.0f;
+            if (pending_op == '*')
+                val = a*b;
+            else if (pending_op == '/')
+                val = a/b;
+            else if (pending_op == '+')
+                val = a+b;
+            else if (pending_op == '-')
+                val = a-b;
+            result = Strutil::format("%g", val);
+            pending_op = 0;
+            continue;
+        }
+        result += r;
+        if (s[0] == '*' || s[0] == '/' || s[0] == '+' || s[0] == '-') {
+            pending_op = s[0];
+            s.remove_prefix (1);
+            continue;
+        }
+        break;
+    }
+    result += std::string(s);
+    // if (verbose)
+    //     std::cout << "  express_impl \"" << orig << "\" -> \"" << result << "\"\n";
+
+    return result;
+}
+
+
+
+// Perform expression evaluation and substitution on a string
+string_view
+Oiiotool::express (string_view str)
+{
+    string_view s = str;
+    // eg. s="ab{cde}fg"
+    size_t openbrace = s.find('{');
+    if (openbrace == s.npos)
+        return str;    // No open brace found -- no expresion substitution
+
+    string_view prefix = s.substr (0, openbrace);
+    s.remove_prefix (openbrace);
+    // eg. s="{cde}fg", prefix="ab"
+    string_view expr = Strutil::parse_nested (s);
+    if (expr.empty())
+        return str;     // No corresponding close brace found -- give up
+    // eg. prefix="ab", expr="{cde}", s="fg", prefix="ab"
+    ASSERT (expr.front() == '{' && expr.back() == '}');
+    expr.remove_prefix(1);
+    expr.remove_suffix(1);
+    // eg. expr="cde"
+    ustring result = ustring::format("%s%s%s", prefix, express_impl(expr), express(s));
+    if (verbose)
+        std::cout << "Expanding expression \"" << str << "\" -> \"" << result << "\"\n";
+    return result;
+}
+
+
+
+bool
+OiioTool::set_attribute (ImageRecRef img, string_view attribname,
+                         TypeDesc type, string_view value)
+{
+    // Expression substitution
+    attribname = ot.express(attribname);
+    value = ot.express(value);
+
     ot.read (img);
     img->metadata_modified (true);
-    if (! value.length()) {
+    if (! value.size()) {
         // If the value is the empty string, clear the attribute
         return apply_spec_mod (*img, do_erase_attribute,
                                attribname, ot.allsubimages);
@@ -868,11 +1103,9 @@ static int
 set_caption (int argc, const char *argv[])
 {
     ASSERT (argc == 2);
-    const char *newargs[3];
-    newargs[0] = argv[0];
-    newargs[1] = "ImageDescription";
-    newargs[2] = argv[1];
+    const char *newargs[3] = { argv[0], "ImageDescription", argv[1] };
     return set_string_attribute (3, newargs);
+    // N.B. set_string_attribute does expression expansion on its args
 }
 
 
@@ -907,7 +1140,7 @@ set_keyword (int argc, const char *argv[])
         return 0;
     }
 
-    std::string keyword (argv[1]);
+    std::string keyword (ot.express(argv[1]));
     if (keyword.size())
         apply_spec_mod (*ot.curimg, do_set_keyword, keyword, ot.allsubimages);
 
@@ -938,6 +1171,7 @@ set_orientation (int argc, const char *argv[])
         return 0;
     }
     return set_attribute (ot.curimg, "Orientation", TypeDesc::INT, argv[1]);
+    // N.B. set_attribute does expression expansion on its args
 }
 
 
@@ -971,11 +1205,12 @@ static int
 rotate_orientation (int argc, const char *argv[])
 {
     ASSERT (argc == 1);
+    string_view command = ot.express (argv[0]);
     if (! ot.curimg.get()) {
-        ot.warning (argv[0], "no current image available to modify");
+        ot.warning (command, "no current image available to modify");
         return 0;
     }
-    apply_spec_mod (*ot.curimg, do_rotate_orientation, argv[0],
+    apply_spec_mod (*ot.curimg, do_rotate_orientation, command,
                     ot.allsubimages);
     return 0;
 }
@@ -988,6 +1223,8 @@ set_origin (int argc, const char *argv[])
     if (ot.postpone_callback (1, set_origin, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view origin  = ot.express (argv[1]);
 
     ot.read ();
     ImageRecRef A = ot.curimg;
@@ -995,9 +1232,9 @@ set_origin (int argc, const char *argv[])
     int x = spec.x, y = spec.y, z = spec.z;
     int w = spec.width, h = spec.height, d = spec.depth;
 
-    ot.adjust_geometry (argv[0], w, h, x, y, argv[1]);
+    ot.adjust_geometry (command, w, h, x, y, origin.c_str());
     if (spec.width != w || spec.height != h || spec.depth != d)
-        ot.warning (argv[0], "can't be used to change the size, only the origin");
+        ot.warning (command, "can't be used to change the size, only the origin");
     if (spec.x != x || spec.y != y) {
         ImageBuf &ib = (*A)(0,0);
         if (ib.storage() == ImageBuf::IMAGECACHE) {
@@ -1018,7 +1255,7 @@ set_origin (int argc, const char *argv[])
         ibspec.z = z;
         A->metadata_modified (true);
     }
-    ot.function_times["origin"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1030,6 +1267,8 @@ set_fullsize (int argc, const char *argv[])
     if (ot.postpone_callback (1, set_fullsize, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view size    = ot.express (argv[1]);
 
     ot.read ();
     ImageRecRef A = ot.curimg;
@@ -1037,7 +1276,7 @@ set_fullsize (int argc, const char *argv[])
     int x = spec.full_x, y = spec.full_y;
     int w = spec.full_width, h = spec.full_height;
 
-    ot.adjust_geometry (argv[0], w, h, x, y, argv[1]);
+    ot.adjust_geometry (argv[0], w, h, x, y, size.c_str());
     if (spec.full_x != x || spec.full_y != y ||
           spec.full_width != w || spec.full_height != h) {
         spec.full_x = x;
@@ -1046,7 +1285,7 @@ set_fullsize (int argc, const char *argv[])
         spec.full_height = h;
         A->metadata_modified (true);
     }
-    ot.function_times["fullsize"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1058,6 +1297,7 @@ set_full_to_pixels (int argc, const char *argv[])
     if (ot.postpone_callback (1, set_full_to_pixels, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ot.read ();
     ImageRecRef A = ot.curimg;
@@ -1082,7 +1322,7 @@ set_full_to_pixels (int argc, const char *argv[])
         }
     }
     A->metadata_modified (true);
-    ot.function_times["fullpixels"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1094,6 +1334,7 @@ set_colorspace (int argc, const char *argv[])
     ASSERT (argc == 2);
     const char *args[3] = { argv[0], "oiio:ColorSpace", argv[1] };
     return set_string_attribute (3, args);
+    // N.B. set_string_attribute does expression expansion on its args
 }
 
 
@@ -1106,8 +1347,9 @@ action_colorconvert (int argc, const char *argv[])
         return 0;
     Timer timer (ot.enable_function_timing);
 
-    std::string fromspace = argv[1];
-    std::string tospace = argv[2];
+    string_view command   = ot.express (argv[0]);
+    string_view fromspace = ot.express (argv[1]);
+    string_view tospace   = ot.express (argv[2]);
 
     ot.read ();
     bool need_transform = false;
@@ -1134,11 +1376,11 @@ action_colorconvert (int argc, const char *argv[])
             bool ok = ImageBufAlgo::colorconvert ((*ot.curimg)(s,m), (*A)(s,m),
                                  fromspace.c_str(), tospace.c_str(), false);
             if (! ok)
-                ot.error (argv[0], (*ot.curimg)(s,m).geterror());
+                ot.error (command, (*ot.curimg)(s,m).geterror());
         }
     }
 
-    ot.function_times["colorconvert"] += timer();
+    ot.function_times[command] += timer();
     return 1;
 }
 
@@ -1149,11 +1391,14 @@ action_tocolorspace (int argc, const char *argv[])
 {
     // Don't time -- let it get accounted by colorconvert
     ASSERT (argc == 2);
+    string_view command = ot.express (argv[0]);
+    string_view space   = ot.express (argv[01]);
+
     if (! ot.curimg.get()) {
-        ot.warning (argv[0], "no current image available to modify");
+        ot.warning (command, "no current image available to modify");
         return 0;
     }
-    const char *args[3] = { argv[0], "current", argv[1] };
+    const char *args[3] = { argv[0], "current", space.c_str() };
     return action_colorconvert (3, args);
 }
 
@@ -1167,7 +1412,8 @@ action_ociolook (int argc, const char *argv[])
         return 0;
     Timer timer (ot.enable_function_timing);
 
-    std::string lookname = argv[1];
+    string_view command  = ot.express (argv[0]);
+    std::string lookname = ot.express(argv[1]);
 
     std::map<std::string,std::string> options;
     options["inverse"] = "0";
@@ -1175,7 +1421,7 @@ action_ociolook (int argc, const char *argv[])
     options["to"] = "current";
     options["key"] = "";
     options["value"] = "";
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     std::string fromspace = options["from"];
     std::string tospace = options["to"];
     std::string contextkey = options["key"];
@@ -1201,11 +1447,11 @@ action_ociolook (int argc, const char *argv[])
                 false, inverse,
                 contextkey.c_str(), contextvalue.c_str());
             if (! ok)
-                ot.error (argv[0], (*ot.curimg)(s,m).geterror());
+                ot.error (command, (*ot.curimg)(s,m).geterror());
         }
     }
 
-    ot.function_times["ociolook"] += timer();
+    ot.function_times[command] += timer();
     return 1;
 }
 
@@ -1219,8 +1465,9 @@ action_ociodisplay (int argc, const char *argv[])
         return 0;
     Timer timer (ot.enable_function_timing);
 
-    std::string displayname = argv[1];
-    std::string viewname = argv[2];
+    string_view command     = ot.express (argv[0]);
+    std::string displayname = ot.express (argv[1]);
+    std::string viewname    = ot.express (argv[2]);
 
     // TODO: this would be useful, but I don't like the syntax
 //    if (displayname == "")
@@ -1232,7 +1479,7 @@ action_ociodisplay (int argc, const char *argv[])
     options["from"] = "current";
     options["key"] = "";
     options["value"] = "";
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     std::string fromspace = options["from"];
     std::string contextkey = options["key"];
     std::string contextvalue = options["value"];
@@ -1256,11 +1503,11 @@ action_ociodisplay (int argc, const char *argv[])
                     override_looks ? options["looks"].c_str() : 0, false,
                     contextkey.c_str(), contextvalue.c_str());
             if (! ok)
-                ot.error (argv[0], (*ot.curimg)(s,m).geterror());
+                ot.error (command, (*ot.curimg)(s,m).geterror());
         }
     }
 
-    ot.function_times["ociodisplay"] += timer();
+    ot.function_times[command] += timer();
     return 1;
 }
 
@@ -1272,9 +1519,10 @@ action_unpremult (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_unpremult, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A = ot.pop();
-    A->read ();
+    ot.read (A);
     ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0,
                                  ot.allsubimages ? -1 : 0,
                                  true /*writable*/, true /*copy_pixels*/));
@@ -1282,9 +1530,9 @@ action_unpremult (int argc, const char *argv[])
 
     for (int s = 0, subimages = R->subimages();  s < subimages;  ++s)
         for (int m = 0, miplevels = R->miplevels(s);  m < miplevels;  ++m)
-            ImageBufAlgo::unpremult ((*R)(s,m));
+            ImageBufAlgo::unpremult ((*R)(s,m), (*R)(s,m));
 
-    ot.function_times["unpremult"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1296,9 +1544,10 @@ action_premult (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_premult, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A = ot.pop();
-    A->read ();
+    ot.read (A);
     ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0,
                                  ot.allsubimages ? -1 : 0,
                                  true /*writable*/, true /*copy_pixels*/));
@@ -1306,9 +1555,9 @@ action_premult (int argc, const char *argv[])
 
     for (int s = 0, subimages = R->subimages();  s < subimages;  ++s)
         for (int m = 0, miplevels = R->miplevels(s);  m < miplevels;  ++m)
-            ImageBufAlgo::premult ((*R)(s,m));
+            ImageBufAlgo::premult ((*R)(s,m), (*R)(s,m));
 
-    ot.function_times["premult"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1331,6 +1580,7 @@ action_unmip (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_unmip, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ot.read ();
     bool mipmapped = false;
@@ -1342,7 +1592,7 @@ action_unmip (int argc, const char *argv[])
 
     ImageRecRef newimg (new ImageRec (*ot.curimg, -1, 0, true, true));
     ot.curimg = newimg;
-    ot.function_times["unmip"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1354,16 +1604,19 @@ set_channelnames (int argc, const char *argv[])
     if (ot.postpone_callback (1, set_channelnames, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command    = ot.express (argv[0]);
+    string_view channelarg = ot.express (argv[1]);
+
     ImageRecRef A = ot.curimg;
     ot.read (A);
 
     std::vector<std::string> newchannelnames;
-    Strutil::split (argv[1], newchannelnames, ",");
+    Strutil::split (channelarg, newchannelnames, ",");
 
     for (int s = 0; s < A->subimages(); ++s) {
         int miplevels = A->miplevels(s);
         for (int m = 0;  m < miplevels;  ++m) {
-            ImageSpec *spec = A->spec(s,m);
+            ImageSpec *spec = &(*A)(s,m).specmod();
             spec->channelnames.resize (spec->nchannels);
             for (int c = 0; c < spec->nchannels;  ++c) {
                 if (c < (int)newchannelnames.size() &&
@@ -1382,9 +1635,10 @@ set_channelnames (int argc, const char *argv[])
                         spec->z_channel = c;
                 }
             }
+           A->update_spec_from_imagebuf(s,m);
         }
     }
-    ot.function_times["chnames"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1394,7 +1648,8 @@ set_channelnames (int argc, const char *argv[])
 // a comma separated list of channels (e.g., "B,G,R,A"), compute the
 // vector of integer indices for those channels (e.g., {2,1,0,3}).
 // A channel may be a literal assignment (e.g., "=0.5"), or a literal
-// assignment with channel naming (e.g., "Z=0.5").
+// assignment with channel naming (e.g., "Z=0.5"), the name of a channel
+// ("A"), or the name of a channel with a new name reassigned ("R=G").
 // Return true for success, false for failure, including if any of the
 // channels were not present in the image.  Upon return, channels
 // will be the indices of the source image channels to copy (-1 for
@@ -1402,69 +1657,100 @@ set_channelnames (int argc, const char *argv[])
 // the value to fill un-sourced channels (defaulting to zero), and
 // newchannelnames will be the name of renamed or non-default-named
 // channels (defaulting to "" if no special name is needed).
-static bool
-decode_channel_set (const ImageSpec &spec, std::string chanlist,
+bool
+decode_channel_set (const ImageSpec &spec, string_view chanlist,
                     std::vector<std::string> &newchannelnames,
                     std::vector<int> &channels, std::vector<float> &values)
 {
+    // std::cout << "Decode_channel_set '" << chanlist << "'\n";
     channels.clear ();
-    while (chanlist.length()) {
-        // Extract the next channel name
-        size_t pos = chanlist.find_first_of(",");
-        std::string onechan (chanlist, 0, pos);
-        onechan = Strutil::strip (onechan);
-        if (pos == std::string::npos)
-            chanlist.clear();
-        else
-            chanlist = chanlist.substr (pos+1, std::string::npos);
-
-        // Find the index corresponding to that channel
-        newchannelnames.push_back (std::string());
-        float value = 0.0f;
-        int ch = -1;
-        for (int i = 0;  i < spec.nchannels;  ++i)
-            if (spec.channelnames[i] == onechan) { // name of a known channel?
-                ch = i;
-                break;
-            }
-        if (ch < 0) { // Didn't find a match? Try case-insensitive.
-            for (int i = 0;  i < spec.nchannels;  ++i)
-                if (Strutil::iequals (spec.channelnames[i], onechan)) {
-                    ch = i;
-                    break;
+    for (int c = 0; chanlist.length(); ++c) {
+        // It looks like:
+        //     <int>                (put old channel here, by numeric index)
+        //     oldname              (put old named channel here)
+        //     newname=oldname      (put old channel here, with new name)
+        //     newname=<float>      (put constant value here, with a name)
+        //     =<float>             (put constant value here, default name)
+        std::string newname;
+        int chan = -1;
+        float val = 0.0f;
+        Strutil::skip_whitespace (chanlist);
+        if (chanlist.empty())
+            break;
+        if (Strutil::parse_int (chanlist, chan) && chan >= 0
+                                                && chan < spec.nchannels) {
+            // case: <int>
+            newname = spec.channelnames[chan];
+        } else if (Strutil::parse_char (chanlist, '=')) {
+            // case: =<float>
+            Strutil::parse_float (chanlist, val);
+        } else {
+            string_view n = Strutil::parse_until (chanlist, "=,");
+            string_view oldname;
+            if (Strutil::parse_char (chanlist, '=')) {
+                if (Strutil::parse_float (chanlist, val)) {
+                    // case: newname=float
+                    newname = n;
+                } else {
+                    // case: newname=oldname
+                    newname = n;
+                    oldname = Strutil::parse_until (chanlist, ",");
                 }
-        }
-        if (ch < 0 && onechan.length() &&
-                (isdigit(onechan[0]) || onechan[0] == '-'))
-            ch = atoi (onechan.c_str());  // numeric channel index
-        if (ch < 0 && onechan.length()) {
-            // Look for Either =val or name=val
-            size_t equal_pos = onechan.find ('=');
-            if (equal_pos != std::string::npos) {
-                value = (float) atof (onechan.c_str()+equal_pos+1);
-                onechan.erase (equal_pos);
-                newchannelnames.back() = onechan;
+            } else {
+                // case: oldname
+                oldname = n;
+            }
+            if (oldname.size()) {
+                for (int i = 0;  i < spec.nchannels;  ++i)
+                    if (spec.channelnames[i] == oldname) { // name of a known channel?
+                        chan = i;
+                        break;
+                    }
+                if (chan < 0) { // Didn't find a match? Try case-insensitive.
+                    for (int i = 0;  i < spec.nchannels;  ++i)
+                        if (Strutil::iequals (spec.channelnames[i], oldname)) {
+                            chan = i;
+                            break;
+                        }
+                }
+                if (newname.empty() && chan >= 0)
+                    newname = spec.channelnames[chan];
             }
         }
-        channels.push_back (ch);
-        values.push_back (value);
+
+        if (! newname.size()) {
+            const char *RGBAZ[] = { "R", "G", "B", "A", "Z" };
+            if (c <= 4)
+                newname = std::string(RGBAZ[c]);
+            else
+                newname = Strutil::format ("channel%d", c);
+        }
+
+        // std::cout << "  Chan " << c << ": " << newname << ' ' << chan << ' ' << val << "\n";
+        newchannelnames.push_back (newname);
+        channels.push_back (chan);
+        values.push_back (val);
+
+        if (! Strutil::parse_char (chanlist, ','))
+            break;
     }
     return true;
 }
 
 
 
-static int
+int
 action_channels (int argc, const char *argv[])
 {
     if (ot.postpone_callback (1, action_channels, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command  = ot.express (argv[0]);
+    string_view chanlist = ot.express (argv[1]);
 
     ImageRecRef A (ot.pop());
     ot.read (A);
 
-    std::string chanlist = argv[1];
     if (chanlist == "RGB")   // Fix common synonyms/mistakes
         chanlist = "R,G,B";
     else if (chanlist == "RGBA")
@@ -1482,7 +1768,7 @@ action_channels (int argc, const char *argv[])
         bool ok = decode_channel_set (*A->spec(s,0), chanlist,
                                       newchannelnames, channels, values);
         if (! ok) {
-            ot.error (argv[0], Strutil::format("Invalid or unknown channel selection \"%s\"", chanlist));
+            ot.error (command, Strutil::format("Invalid or unknown channel selection \"%s\"", chanlist));
             ot.push (A);
             return 0;
         }
@@ -1516,14 +1802,14 @@ action_channels (int argc, const char *argv[])
                                       (int)channels.size(), &channels[0],
                                       &values[0], &newchannelnames[0], false);
             if (! ok)
-                ot.error ("channels", (*R)(s,m).geterror());
+                ot.error (command, (*R)(s,m).geterror());
             // Tricky subtlety: IBA::channels changed the underlying IB,
             // we may need to update the IRR's copy of the spec.
             R->update_spec_from_imagebuf(s,m);
         }
     }
 
-    ot.function_times["channels"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1535,6 +1821,7 @@ action_chappend (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_chappend, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command  = ot.express (argv[0]);
 
     ImageRecRef B (ot.pop());
     ImageRecRef A (ot.pop());
@@ -1560,13 +1847,13 @@ action_chappend (int argc, const char *argv[])
             // Shuffle the indexed/named channels
             bool ok = ImageBufAlgo::channel_append ((*R)(s,m), (*A)(s,m), (*B)(s,m));
             if (! ok)
-                ot.error ("chappend", (*R)(s,m).geterror());
+                ot.error (command, (*R)(s,m).geterror());
             // Tricky subtlety: IBA::channels changed the underlying IB,
             // we may need to update the IRR's copy of the spec.
             R->update_spec_from_imagebuf(s,m);
         }
     }
-    ot.function_times["chappend"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1578,6 +1865,8 @@ action_selectmip (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_selectmip, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    int miplevel = Strutil::from_string<int> (ot.express(argv[1]));
 
     ot.read ();
     bool mipmapped = false;
@@ -1587,9 +1876,9 @@ action_selectmip (int argc, const char *argv[])
         return 0;    // --selectmip on an unmipped image is a no-op
     }
 
-    ImageRecRef newimg (new ImageRec (*ot.curimg, -1, atoi(argv[1]), true, true));
+    ImageRecRef newimg (new ImageRec (*ot.curimg, -1, miplevel, true, true));
     ot.curimg = newimg;
-    ot.function_times["selectmip"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1601,15 +1890,24 @@ action_select_subimage (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_select_subimage, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    int subimage = Strutil::from_string<int> (ot.express(argv[1]));
 
     ot.read ();
+    if (subimage < 0 || subimage >= ot.curimg->subimages()) {
+        ot.error (command,
+                 Strutil::format ("Invalid -subimage (%d): %s has %d subimage%s",
+                                  subimage, ot.curimg->name(), ot.curimg->subimages(),
+                                  ot.curimg->subimages() == 1 ? "" : "s"));
+        return 0;
+    }
+
     if (ot.curimg->subimages() == 1)
         return 0;    // --subimage on a single-image file is a no-op
     
-    int subimage = std::min (atoi(argv[1]), ot.curimg->subimages());
     ImageRecRef A = ot.pop();
     ot.push (new ImageRec (*A, subimage));
-    ot.function_times["subimage"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1621,6 +1919,7 @@ action_subimage_append (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_subimage_append, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef B (ot.pop());
     ImageRecRef A (ot.pop());
@@ -1649,7 +1948,7 @@ action_subimage_append (int argc, const char *argv[])
         for (int m = 0;  m < A->miplevels(s);  ++m) {
             bool ok = (*R)(sub,m).copy ((*A)(s,m));
             if (! ok)
-                ot.error ("siappend", (*R)(sub,m).geterror());
+                ot.error (command, (*R)(sub,m).geterror());
             // Tricky subtlety: IBA::channels changed the underlying IB,
             // we may need to update the IRR's copy of the spec.
             R->update_spec_from_imagebuf(sub,m);
@@ -1659,14 +1958,14 @@ action_subimage_append (int argc, const char *argv[])
         for (int m = 0;  m < B->miplevels(s);  ++m) {
             bool ok = (*R)(sub,m).copy ((*B)(s,m));
             if (! ok)
-                ot.error ("siappend", (*R)(sub,m).geterror());
+                ot.error (command, (*R)(sub,m).geterror());
             // Tricky subtlety: IBA::channels changed the underlying IB,
             // we may need to update the IRR's copy of the spec.
             R->update_spec_from_imagebuf(sub,m);
         }
     }
 
-    ot.function_times["siappend"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1678,6 +1977,8 @@ action_colorcount (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_colorcount, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command  = ot.express (argv[0]);
+    string_view colorarg = ot.express (argv[1]);
 
     ot.read ();
     ImageBuf &Aib ((*ot.curimg)(0,0));
@@ -1687,10 +1988,10 @@ action_colorcount (int argc, const char *argv[])
     // that use ';' as a command separator, also accept ":".
     std::vector<float> colorvalues;
     std::vector<std::string> colorstrings;
-    if (strchr (argv[1], ':'))
-        Strutil::split (argv[1], colorstrings, ":");
+    if (colorarg.find(':') != colorarg.npos)
+        Strutil::split (colorarg, colorstrings, ":");
     else
-        Strutil::split (argv[1], colorstrings, ";");
+        Strutil::split (colorarg, colorstrings, ";");
     int ncolors = (int) colorstrings.size();
     for (int col = 0; col < ncolors; ++col) {
         std::vector<float> color (nchannels, 0.0f);
@@ -1701,7 +2002,7 @@ action_colorcount (int argc, const char *argv[])
 
     std::vector<float> eps (nchannels, 0.001f);
     std::map<std::string,std::string> options;
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     Strutil::extract_from_list_string (eps, options["eps"]);
 
     imagesize_t *count = ALLOCA (imagesize_t, ncolors);
@@ -1711,10 +2012,10 @@ action_colorcount (int argc, const char *argv[])
         for (int col = 0;  col < ncolors;  ++col)
             std::cout << Strutil::format("%8d  %s\n", count[col], colorstrings[col]);
     } else {
-        ot.error ("colorcount", (*ot.curimg)(0,0).geterror());
+        ot.error (command, (*ot.curimg)(0,0).geterror());
     }
 
-    ot.function_times["colorcount"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1726,28 +2027,31 @@ action_rangecheck (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_rangecheck, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command  = ot.express (argv[0]);
+    string_view lowarg   = ot.express (argv[1]);
+    string_view higharg  = ot.express (argv[2]);
 
     ot.read ();
     ImageBuf &Aib ((*ot.curimg)(0,0));
     int nchannels = Aib.nchannels();
 
     std::vector<float> low(nchannels,0.0f), high(nchannels,1.0f);
-    Strutil::extract_from_list_string (low, argv[1], ",");
-    Strutil::extract_from_list_string (high, argv[2], ",");
+    Strutil::extract_from_list_string (low, lowarg, ",");
+    Strutil::extract_from_list_string (high, higharg, ",");
 
     imagesize_t lowcount = 0, highcount = 0, inrangecount = 0;
     bool ok = ImageBufAlgo::color_range_check ((*ot.curimg)(0,0), &lowcount,
                                                &highcount, &inrangecount,
                                                &low[0], &high[0]);
     if (ok) {
-        std::cout << Strutil::format("%8d  < %s\n", lowcount, argv[1]);
-        std::cout << Strutil::format("%8d  > %s\n", highcount, argv[2]);
+        std::cout << Strutil::format("%8d  < %s\n", lowcount, lowarg);
+        std::cout << Strutil::format("%8d  > %s\n", highcount, higharg);
         std::cout << Strutil::format("%8d  within range\n", inrangecount);
     } else {
-        ot.error ("rangecheck", (*ot.curimg)(0,0).geterror());
+        ot.error (command, (*ot.curimg)(0,0).geterror());
     }
 
-    ot.function_times["rangecheck"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1759,15 +2063,16 @@ action_diff (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_diff, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     int ret = do_action_diff (*ot.image_stack.back(), *ot.curimg, ot);
     if (ret != DiffErrOK && ret != DiffErrWarn)
         ot.return_value = EXIT_FAILURE;
 
     if (ret != DiffErrOK && ret != DiffErrWarn && ret != DiffErrFail)
-        ot.error ("Error doing --diff");
+        ot.error (command);
 
-    ot.function_times["diff"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1779,15 +2084,16 @@ action_pdiff (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_pdiff, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     int ret = do_action_diff (*ot.image_stack.back(), *ot.curimg, ot, 1);
     if (ret != DiffErrOK && ret != DiffErrWarn)
         ot.return_value = EXIT_FAILURE;
 
     if (ret != DiffErrOK && ret != DiffErrWarn && ret != DiffErrFail)
-        ot.error ("Error doing %s", argv[0]);
+        ot.error (command);
 
-    ot.function_times["pdiff"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1799,6 +2105,7 @@ action_add (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_add, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef B (ot.pop());
     ImageRecRef A (ot.pop());
@@ -1816,10 +2123,10 @@ action_add (int argc, const char *argv[])
         const ImageBuf &Bib ((*B)(s));
         bool ok = ImageBufAlgo::add (Rib, Aib, Bib);
         if (! ok)
-            ot.error (argv[0], Rib.geterror());
+            ot.error (command, Rib.geterror());
     }
              
-    ot.function_times["add"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1831,6 +2138,7 @@ action_sub (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_sub, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef B (ot.pop());
     ImageRecRef A (ot.pop());
@@ -1848,10 +2156,141 @@ action_sub (int argc, const char *argv[])
         const ImageBuf &Bib ((*B)(s));
         bool ok = ImageBufAlgo::sub (Rib, Aib, Bib);
         if (! ok)
-            ot.error (argv[0], Rib.geterror());
+            ot.error (command, Rib.geterror());
     }
              
-    ot.function_times["sub"] += timer();
+    ot.function_times[command] += timer();
+    return 0;
+}
+
+
+
+static int
+action_subc (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_subc, argc, argv))
+        return 0;
+    Timer timer (ot.enable_function_timing);
+    string_view command  = ot.express (argv[0]);
+    string_view colorarg = ot.express (argv[1]);
+
+    ImageRecRef A = ot.pop();
+    ot.read (A);
+    ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0,
+                                 ot.allsubimages ? -1 : 0,
+                                 true /*writable*/, true /*copy_pixels*/));
+    ot.push (R);
+
+    for (int s = 0, subimages = ot.curimg->subimages(); s < subimages; ++s) {
+        int nchans = R->spec(s,0)->nchannels;
+        std::vector<float> val (nchans, 0.0f);
+        int nvals = Strutil::extract_from_list_string (val, colorarg);
+        val.resize (nvals);
+        val.resize (nchans, val.size() == 1 ? val.back() : 0.0f);
+        for (int m = 0, miplevels = ot.curimg->miplevels(s);  m < miplevels;  ++m) {
+            if (! ImageBufAlgo::sub ((*R)(s,m), (*R)(s,m), &val[0]))
+                ot.error (command, (*R)(s,m).geterror());
+        }
+    }
+
+    ot.function_times[command] += timer();
+    return 0;
+}
+
+
+
+
+static int
+action_absdiff (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (2, action_absdiff, argc, argv))
+        return 0;
+    Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+
+    ImageRecRef B (ot.pop());
+    ImageRecRef A (ot.pop());
+    ot.read (A);
+    ot.read (B);
+    ImageRecRef R (new ImageRec (*A, *B, ot.allsubimages ? -1 : 0,
+                                 ImageRec::WinMergeUnion,
+                                 ImageRec::WinMergeUnion, TypeDesc::FLOAT));
+    ot.push (R);
+
+    int subimages = R->subimages();
+    for (int s = 0;  s < subimages;  ++s) {
+        ImageBuf &Rib ((*R)(s));
+        const ImageBuf &Aib ((*A)(s));
+        const ImageBuf &Bib ((*B)(s));
+        bool ok = ImageBufAlgo::absdiff (Rib, Aib, Bib);
+        if (! ok)
+            ot.error (command, Rib.geterror());
+    }
+
+    ot.function_times[command] += timer();
+    return 0;
+}
+
+
+
+static int
+action_absdiffc (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_absdiffc, argc, argv))
+        return 0;
+    Timer timer (ot.enable_function_timing);
+    string_view command  = ot.express (argv[0]);
+    string_view colorarg = ot.express(argv[1]);
+
+    ImageRecRef A = ot.pop();
+    ot.read (A);
+    ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0,
+                                 ot.allsubimages ? -1 : 0,
+                                 true /*writable*/, true /*copy_pixels*/));
+    ot.push (R);
+
+    for (int s = 0, subimages = ot.curimg->subimages(); s < subimages; ++s) {
+        int nchans = R->spec(s,0)->nchannels;
+        std::vector<float> val (nchans, 0.0f);
+        int nvals = Strutil::extract_from_list_string (val, colorarg);
+        val.resize (nvals);
+        val.resize (nchans, val.size() == 1 ? val.back() : 0.0f);
+        for (int m = 0, miplevels = ot.curimg->miplevels(s);  m < miplevels;  ++m) {
+            if (! ImageBufAlgo::absdiff ((*R)(s,m), (*R)(s,m), &val[0]))
+                ot.error (command, (*R)(s,m).geterror());
+        }
+    }
+
+    ot.function_times[command] += timer();
+    return 0;
+}
+
+
+
+static int
+action_abs (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_abs, argc, argv))
+        return 0;
+    Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+
+    ot.read ();
+    ImageRecRef A = ot.pop();
+    ot.push (new ImageRec (*A, ot.allsubimages ? -1 : 0,
+                           ot.allsubimages ? -1 : 0, true, false));
+
+    for (int s = 0, subimages = ot.curimg->subimages(); s < subimages; ++s) {
+        for (int m = 0, miplevels = ot.curimg->miplevels(s); m < miplevels; ++m) {
+            const ImageBuf &Aib ((*A)(s,m));
+            ImageBuf &Rib ((*ot.curimg)(s,m));
+            bool ok = ImageBufAlgo::abs (Rib, Aib);
+            if (! ok)
+                ot.error (command, Rib.geterror());
+        }
+    }
+
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -1863,6 +2302,7 @@ action_mul (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_mul, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef B (ot.pop());
     ImageRecRef A (ot.pop());
@@ -1879,64 +2319,29 @@ action_mul (int argc, const char *argv[])
         const ImageBuf &Bib ((*B)(s));
         bool ok = ImageBufAlgo::mul (Rib, Aib, Bib);
         if (! ok)
-            ot.error (argv[0], Rib.geterror());
+            ot.error (command, Rib.geterror());
     }
              
-    ot.function_times["mul"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
 
 
 static int
-action_abs (int argc, const char *argv[])
+action_mulc (int argc, const char *argv[])
 {
-    if (ot.postpone_callback (1, action_abs, argc, argv))
+    if (ot.postpone_callback (1, action_mulc, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
-
-    ot.read ();
-    ImageRecRef A = ot.pop();
-    ot.push (new ImageRec (*A, ot.allsubimages ? -1 : 0,
-                           ot.allsubimages ? -1 : 0, true, false));
-
-    int subimages = ot.curimg->subimages();
-    for (int s = 0;  s < subimages;  ++s) {
-        int miplevels = ot.curimg->miplevels(s);
-        for (int m = 0;  m < miplevels;  ++m) {
-            const ImageBuf &Aib ((*A)(s,m));
-            ImageBuf &Rib ((*ot.curimg)(s,m));
-            ImageBuf::ConstIterator<float> a (Aib);
-            ImageBuf::Iterator<float> r (Rib);
-            int nchans = Rib.nchannels();
-            for ( ; ! r.done(); ++r) {
-                a.pos (r.x(), r.y());
-                for (int c = 0;  c < nchans;  ++c)
-                    r[c] = fabsf(a[c]);
-            }
-        }
-    }
-             
-    ot.function_times["abs"] += timer();
-    return 0;
-}
-
-
-
-static int
-action_cmul (int argc, const char *argv[])
-{
-    if (ot.postpone_callback (1, action_cmul, argc, argv))
-        return 0;
-    Timer timer (ot.enable_function_timing);
-
+    string_view command = ot.express (argv[0]);
     std::vector<std::string> scalestrings;
-    Strutil::split (std::string(argv[1]), scalestrings, ",");
+    Strutil::split (ot.express(argv[1]), scalestrings, ",");
     if (scalestrings.size() < 1)
         return 0;   // Implicit multiplication by 1 if we can't figure it out
 
     ImageRecRef A = ot.pop();
-    A->read ();
+    ot.read (A);
     ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0,
                                  ot.allsubimages ? -1 : 0,
                                  true /*writable*/, true /*copy_pixels*/));
@@ -1959,30 +2364,93 @@ action_cmul (int argc, const char *argv[])
         for (int m = 0, miplevels = ot.curimg->miplevels(s); m < miplevels; ++m) {
             bool ok = ImageBufAlgo::mul ((*R)(s,m), (*R)(s,m), &scale[0]);
             if (! ok)
-                ot.error ("cmul", (*R)(s,m).geterror());
+                ot.error (command, (*R)(s,m).geterror());
         }
     }
 
-    ot.function_times["cmul"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
 
 
 static int
-action_cadd (int argc, const char *argv[])
+action_div (int argc, const char *argv[])
 {
-    if (ot.postpone_callback (1, action_cadd, argc, argv))
+    if (ot.postpone_callback (2, action_div, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
+    ImageRecRef B (ot.pop());
+    ImageRecRef A (ot.pop());
+    ot.read (A);
+    ot.read (B);
+    ImageRecRef R (new ImageRec (*A, *B, ot.allsubimages ? -1 : 0,
+                                 ImageRec::WinMergeUnion,
+                                 ImageRec::WinMergeUnion, TypeDesc::FLOAT));
+    ot.push (R);
+
+    for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
+        ImageBuf &Rib ((*R)(s));
+        if (! ImageBufAlgo::div (Rib, (*A)(s), (*B)(s)))
+            ot.error (command, Rib.geterror());
+    }
+
+    ot.function_times[command] += timer();
+    return 0;
+}
+
+
+
+static int
+action_divc (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_divc, argc, argv))
+        return 0;
+    Timer timer (ot.enable_function_timing);
+    string_view command  = ot.express (argv[0]);
+    string_view colorarg = ot.express (argv[1]);
+
+    ImageRecRef A = ot.pop();
+    ot.read (A);
+    ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0,
+                                 ot.allsubimages ? -1 : 0,
+                                 true /*writable*/, true /*copy_pixels*/));
+    ot.push (R);
+
+    for (int s = 0, subimages = ot.curimg->subimages(); s < subimages; ++s) {
+        int nchans = R->spec(s,0)->nchannels;
+        std::vector<float> val (nchans, 0.0f);
+        int nvals = Strutil::extract_from_list_string (val, colorarg);
+        val.resize (nvals);
+        val.resize (nchans, val.size() == 1 ? val.back() : 0.0f);
+        for (int m = 0, miplevels = ot.curimg->miplevels(s);  m < miplevels;  ++m) {
+            if (! ImageBufAlgo::div ((*R)(s,m), (*R)(s,m), &val[0]))
+                ot.error (command, (*R)(s,m).geterror());
+        }
+    }
+
+    ot.function_times[command] += timer();
+    return 0;
+}
+
+
+
+static int
+action_addc (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_addc, argc, argv))
+        return 0;
+    Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
     std::vector<std::string> addstrings;
-    Strutil::split (std::string(argv[1]), addstrings, ",");
+    Strutil::split (ot.express(argv[1]), addstrings, ",");
     if (addstrings.size() < 1)
         return 0;   // Implicit addition by 0 if we can't figure it out
 
     ImageRecRef A = ot.pop();
-    A->read ();
+    ot.read (A);
     ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0,
                                  ot.allsubimages ? -1 : 0,
                                  true /*writable*/, true /*copy_pixels*/));
@@ -2005,30 +2473,30 @@ action_cadd (int argc, const char *argv[])
         for (int m = 0, miplevels = ot.curimg->miplevels(s);  m < miplevels;  ++m) {
             bool ok = ImageBufAlgo::add ((*R)(s,m), (*R)(s,m), &val[0]);
             if (! ok)
-                ot.error ("cadd", (*R)(s,m).geterror());
+                ot.error (command, (*R)(s,m).geterror());
         }
     }
 
-    ot.function_times["cadd"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
 
 
 static int
-action_cpow (int argc, const char *argv[])
+action_powc (int argc, const char *argv[])
 {
-    if (ot.postpone_callback (1, action_cpow, argc, argv))
+    if (ot.postpone_callback (1, action_powc, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
-
+    string_view command = ot.express (argv[0]);
     std::vector<std::string> scalestrings;
-    Strutil::split (std::string(argv[1]), scalestrings, ",");
+    Strutil::split (ot.express(argv[1]), scalestrings, ",");
     if (scalestrings.size() < 1)
         return 0;   // Implicit multiplication by 1 if we can't figure it out
 
     ImageRecRef A = ot.pop();
-    A->read ();
+    ot.read (A);
     ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0,
                                  ot.allsubimages ? -1 : 0,
                                  true /*writable*/, true /*copy_pixels*/));
@@ -2051,11 +2519,71 @@ action_cpow (int argc, const char *argv[])
         for (int m = 0, miplevels = ot.curimg->miplevels(s); m < miplevels; ++m) {
             bool ok = ImageBufAlgo::pow ((*R)(s,m), (*R)(s,m), &scale[0]);
             if (! ok)
-                ot.error ("cpow", (*R)(s,m).geterror());
+                ot.error (command, (*R)(s,m).geterror());
         }
     }
 
-    ot.function_times["cpow"] += timer();
+    ot.function_times[command] += timer();
+    return 0;
+}
+
+
+
+static int
+action_noise (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_noise, argc, argv))
+        return 0;
+    Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+
+    std::map<std::string,std::string> options;
+    options["type"] = "gaussian";
+    options["min"] = "0";
+    options["max"] = "0.1";
+    options["mean"] = "0";
+    options["stddev"] = "0.1";
+    options["portion"] = "0.01";
+    options["value"] = "0";
+    options["mono"] = "0";
+    options["seed"] = "0";
+    options["nchannels"] = "10000";
+    extract_options (options, command);
+    std::string type = options["type"];
+    float A = 0.0f, B = 0.1f;
+    if (type == "gaussian") {
+        A = Strutil::from_string<float> (options["mean"]);
+        B = Strutil::from_string<float> (options["stddev"]);
+    } else if (type == "uniform") {
+        A = Strutil::from_string<float> (options["min"]);
+        B = Strutil::from_string<float> (options["max"]);
+    } else if (type == "salt") {
+        A = Strutil::from_string<float> (options["value"]);
+        B = Strutil::from_string<float> (options["portion"]);
+    } else {
+        ot.error (command, Strutil::format ("Unknown noise type \"%s\"", type));
+        return 0;
+    }
+    bool mono = Strutil::from_string<int> (options["mono"]);
+    int seed = Strutil::from_string<int> (options["seed"]);
+    int nchannels = Strutil::from_string<int> (options["nchannels"]);
+
+    ImageRecRef src = ot.pop();
+    ot.read (src);
+    ImageRecRef R (new ImageRec (*src, ot.allsubimages ? -1 : 0, 0,
+                                 true /*writable*/, true /*copy_pixels*/));
+    ot.push (R);
+
+    int subimages = ot.curimg->subimages();
+    for (int s = 0;  s < subimages;  ++s, ++seed) {
+        ROI roi = (*R)(s,0).roi();
+        roi.chend = std::min (roi.chend, nchannels);
+        bool ok = ImageBufAlgo::noise ((*R)(s,0), type, A, B, mono, seed, roi);
+        if (! ok)
+            ot.error (command, (*R)(s,0).geterror());
+    }
+
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2067,6 +2595,7 @@ action_chsum (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_chsum, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A (ot.pop());
     ot.read (A);
@@ -2076,18 +2605,18 @@ action_chsum (int argc, const char *argv[])
     for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
         std::vector<float> weight ((*A)(s).nchannels(), 1.0f);
         std::map<std::string,std::string> options;
-        extract_options (options, argv[0]);
+        extract_options (options, command);
         Strutil::extract_from_list_string (weight, options["weight"]);
 
         ImageBuf &Rib ((*R)(s));
         const ImageBuf &Aib ((*A)(s));
         bool ok = ImageBufAlgo::channel_sum (Rib, Aib, &weight[0]);
         if (! ok)
-            ot.error ("chsum", Rib.geterror());
+            ot.error (command, Rib.geterror());
         R->update_spec_from_imagebuf (s);
     }
 
-    ot.function_times["chsum"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2100,6 +2629,7 @@ action_flip (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_flip, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A = ot.pop();
     ot.read (A);
@@ -2109,11 +2639,11 @@ action_flip (int argc, const char *argv[])
     for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
         bool ok = ImageBufAlgo::flip ((*R)(s), (*A)(s));
         if (! ok)
-            ot.error ("flip", (*R)(s).geterror());
+            ot.error (command, (*R)(s).geterror());
         R->update_spec_from_imagebuf (s);
     }
 
-    ot.function_times["flip"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2125,6 +2655,7 @@ action_flop (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_flop, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A = ot.pop();
     ot.read (A);
@@ -2134,11 +2665,11 @@ action_flop (int argc, const char *argv[])
     for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
         bool ok = ImageBufAlgo::flop ((*R)(s), (*A)(s));
         if (! ok)
-            ot.error ("flop", (*R)(s).geterror());
+            ot.error (command, (*R)(s).geterror());
         R->update_spec_from_imagebuf (s);
     }
 
-    ot.function_times["flop"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2150,6 +2681,7 @@ action_rotate180 (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_rotate180, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A = ot.pop();
     ot.read (A);
@@ -2159,11 +2691,11 @@ action_rotate180 (int argc, const char *argv[])
     for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
         bool ok = ImageBufAlgo::rotate180 ((*R)(s), (*A)(s));
         if (! ok)
-            ot.error ("rotate180", (*R)(s).geterror());
+            ot.error (command, (*R)(s).geterror());
         R->update_spec_from_imagebuf (s);
     }
 
-    ot.function_times["rotate180"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2175,6 +2707,7 @@ action_rotate90 (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_rotate90, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A = ot.pop();
     ot.read (A);
@@ -2184,11 +2717,11 @@ action_rotate90 (int argc, const char *argv[])
     for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
         bool ok = ImageBufAlgo::rotate90 ((*R)(s), (*A)(s));
         if (! ok)
-            ot.error ("rotate90", (*R)(s).geterror());
+            ot.error (command, (*R)(s).geterror());
         R->update_spec_from_imagebuf (s);
     }
 
-    ot.function_times["rotate90"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2200,6 +2733,7 @@ action_rotate270 (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_rotate270, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A = ot.pop();
     ot.read (A);
@@ -2209,11 +2743,11 @@ action_rotate270 (int argc, const char *argv[])
     for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
         bool ok = ImageBufAlgo::rotate270 ((*R)(s), (*A)(s));
         if (! ok)
-            ot.error ("rotate270", (*R)(s).geterror());
+            ot.error (command, (*R)(s).geterror());
         R->update_spec_from_imagebuf (s);
     }
 
-    ot.function_times["rotate270"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2225,6 +2759,7 @@ action_reorient (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_reorient, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     // Make sure time in the rotate functions is charged to reorient
     bool old_enable_function_timing = ot.enable_function_timing;
@@ -2253,7 +2788,7 @@ action_reorient (int argc, const char *argv[])
         ot.push (A);
     }
 
-    ot.function_times["reorient"] += timer();
+    ot.function_times[command] += timer();
     ot.enable_function_timing = old_enable_function_timing;
     return 0;
 }
@@ -2266,6 +2801,7 @@ action_transpose (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_transpose, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A (ot.pop());
     ot.read (A);
@@ -2277,11 +2813,11 @@ action_transpose (int argc, const char *argv[])
     for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
         bool ok = ImageBufAlgo::transpose ((*R)(s), (*A)(s));
         if (! ok)
-            ot.error ("transpose", (*R)(s).geterror());
+            ot.error (command, (*R)(s).geterror());
         R->update_spec_from_imagebuf (s);
     }
 
-    ot.function_times["transpose"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2293,9 +2829,11 @@ action_rotate (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_rotate, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    float angle = Strutil::from_string<float> (ot.express(argv[1]));
 
     std::map<std::string,std::string> options;
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     std::string filtername = options["filter"];
     bool recompute_roi = Strutil::from_string<int>(options["recompute_roi"]);
     bool center_supplied = false;
@@ -2310,7 +2848,6 @@ action_rotate (int argc, const char *argv[])
         }
     }
 
-    float angle = Strutil::from_string<float> (argv[1]);
     ImageRecRef A (ot.pop());
     ot.read (A);
 
@@ -2332,11 +2869,11 @@ action_rotate (int argc, const char *argv[])
                                         angle*float(M_PI/180.0), cx, cy,
                                         filtername, 0.0f, recompute_roi);
         if (! ok)
-            ot.error ("rotate", (*R)(s).geterror());
+            ot.error (command, (*R)(s).geterror());
         R->update_spec_from_imagebuf (s);
     }
 
-    ot.function_times["rotate"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2348,15 +2885,17 @@ action_warp (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_warp, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command   = ot.express (argv[0]);
+    string_view matrixarg = ot.express (argv[1]);
 
     std::map<std::string,std::string> options;
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     std::string filtername = options["filter"];
     bool recompute_roi = Strutil::from_string<int>(options["recompute_roi"]);
 
     std::vector<float> M (9);
-    if (Strutil::extract_from_list_string (M, argv[1]) != 9) {
-        ot.error ("warp", "expected 9 comma-separatd floats to form a 3x3 matrix");
+    if (Strutil::extract_from_list_string (M, matrixarg) != 9) {
+        ot.error (command, "expected 9 comma-separatd floats to form a 3x3 matrix");
         return 0;
     }
 
@@ -2372,11 +2911,11 @@ action_warp (int argc, const char *argv[])
                                       filtername, 0.0f,
                                       recompute_roi, ImageBuf::WrapDefault);
         if (! ok)
-            ot.error ("warp", (*R)(s).geterror());
+            ot.error (command, (*R)(s).geterror());
         R->update_spec_from_imagebuf (s);
     }
 
-    ot.function_times["warp"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2388,10 +2927,12 @@ action_cshift (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_cshift, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view geom    = ot.express (argv[1]);
 
     int x = 0, y = 0, z = 0;
-    if (sscanf (argv[1], "%d%d%d", &x, &y, &z) < 2) {
-        ot.error ("cshift", Strutil::format ("Invalid shift offset '%s'", argv[1]));
+    if (sscanf (geom.c_str(), "%d%d%d", &x, &y, &z) < 2) {
+        ot.error (command, Strutil::format ("Invalid shift offset '%s'", geom));
         return 0;
     }
 
@@ -2405,11 +2946,11 @@ action_cshift (int argc, const char *argv[])
     for (int s = 0, subimages = R->subimages();  s < subimages;  ++s) {
         bool ok = ImageBufAlgo::circular_shift ((*R)(s), (*A)(s), x, y, z); 
         if (! ok)
-            ot.error ("cshift", (*R)(s).geterror());
+            ot.error (command, (*R)(s).geterror());
         R->update_spec_from_imagebuf (s);
     }
 
-    ot.function_times["cshift"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2438,8 +2979,9 @@ static int
 action_swap (int argc, const char *argv[])
 {
     ASSERT (argc == 1);
+    string_view command = ot.express (argv[0]);
     if (ot.image_stack.size() < 1) {
-        ot.error (argv[0], "requires at least two loaded images");
+        ot.error (command, "requires at least two loaded images");
         return 0;
     }
     ImageRecRef B (ot.pop());
@@ -2455,13 +2997,16 @@ action_create (int argc, const char *argv[])
 {
     ASSERT (argc == 3);
     Timer timer (ot.enable_function_timing);
-    int nchans = atoi (argv[2]);
+    string_view command = ot.express (argv[0]);
+    string_view size    = ot.express (argv[1]);
+    int nchans = Strutil::from_string<int> (ot.express(argv[2]));
     if (nchans < 1 || nchans > 1024) {
         ot.warning (argv[0], Strutil::format ("Invalid number of channels: %d", nchans));
         nchans = 3;
     }
     ImageSpec spec (64, 64, nchans, TypeDesc::FLOAT);
-    ot.adjust_geometry (argv[0], spec.width, spec.height, spec.x, spec.y, argv[1]);
+    ot.adjust_geometry (argv[0], spec.width, spec.height, spec.x, spec.y,
+                        size.c_str());
     spec.full_x = spec.x;
     spec.full_y = spec.y;
     spec.full_z = spec.z;
@@ -2471,11 +3016,11 @@ action_create (int argc, const char *argv[])
     ImageRecRef img (new ImageRec ("new", spec, ot.imagecache));
     bool ok = ImageBufAlgo::zero ((*img)());
     if (! ok)
-        ot.error (argv[0], (*img)().geterror());
+        ot.error (command, (*img)().geterror());
     if (ot.curimg)
         ot.image_stack.push_back (ot.curimg);
     ot.curimg = img;
-    ot.function_times["create"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2486,13 +3031,17 @@ action_pattern (int argc, const char *argv[])
 {
     ASSERT (argc == 4);
     Timer timer (ot.enable_function_timing);
-    int nchans = atoi (argv[3]);
+    string_view command = ot.express (argv[0]);
+    std::string pattern = ot.express (argv[1]);
+    std::string size    = ot.express (argv[2]);
+    int nchans = Strutil::from_string<int> (ot.express(argv[3]));
     if (nchans < 1 || nchans > 1024) {
         ot.warning (argv[0], Strutil::format ("Invalid number of channels: %d", nchans));
         nchans = 3;
     }
     ImageSpec spec (64, 64, nchans, TypeDesc::FLOAT);
-    ot.adjust_geometry (argv[0], spec.width, spec.height, spec.x, spec.y, argv[2]);
+    ot.adjust_geometry (argv[0], spec.width, spec.height, spec.x, spec.y,
+                        size.c_str());
     spec.full_x = spec.x;
     spec.full_y = spec.y;
     spec.full_z = spec.z;
@@ -2500,20 +3049,43 @@ action_pattern (int argc, const char *argv[])
     spec.full_height = spec.height;
     spec.full_depth = spec.depth;
     ImageRecRef img (new ImageRec ("new", spec, ot.imagecache));
+    ot.push (img);
     ImageBuf &ib ((*img)());
-    std::string pattern = argv[1];
+    bool ok = true;
     if (Strutil::iequals(pattern,"black")) {
-        bool ok = ImageBufAlgo::zero (ib);
-        if (! ok)
-            ot.error (argv[0], ib.geterror());
+        ok = ImageBufAlgo::zero (ib);
     } else if (Strutil::istarts_with(pattern,"constant")) {
         std::vector<float> fill (nchans, 1.0f);
         std::map<std::string,std::string> options;
         extract_options (options, pattern);
         Strutil::extract_from_list_string (fill, options["color"]);
-        bool ok = ImageBufAlgo::fill (ib, &fill[0]);
-        if (! ok)
-            ot.error (argv[0], ib.geterror());
+        ok = ImageBufAlgo::fill (ib, &fill[0]);
+    } else if (Strutil::istarts_with(pattern,"fill")) {
+        std::vector<float> topleft (nchans, 1.0f);
+        std::vector<float> topright (nchans, 1.0f);
+        std::vector<float> bottomleft (nchans, 1.0f);
+        std::vector<float> bottomright (nchans, 1.0f);
+        std::map<std::string,std::string> options;
+        extract_options (options, pattern);
+        if (Strutil::extract_from_list_string (topleft,     options["topleft"]) &&
+            Strutil::extract_from_list_string (topright,    options["topright"]) &&
+            Strutil::extract_from_list_string (bottomleft,  options["bottomleft"]) &&
+            Strutil::extract_from_list_string (bottomright, options["bottomright"])) {
+            ok = ImageBufAlgo::fill (ib, &topleft[0], &topright[0],
+                                     &bottomleft[0], &bottomright[0]);
+        }
+        else if (Strutil::extract_from_list_string (topleft,    options["top"]) &&
+                 Strutil::extract_from_list_string (bottomleft, options["bottom"])) {
+            ok = ImageBufAlgo::fill (ib, &topleft[0], &bottomleft[0]);
+        }
+        else if (Strutil::extract_from_list_string (topleft,  options["left"]) &&
+                 Strutil::extract_from_list_string (topright, options["right"])) {
+            ok = ImageBufAlgo::fill (ib, &topleft[0], &topright[0],
+                                     &topleft[0], &topright[0]);
+        }
+        else if (Strutil::extract_from_list_string (topleft, options["color"])) {
+            ok = ImageBufAlgo::fill (ib, &topleft[0]);
+        }
     } else if (Strutil::istarts_with(pattern,"checker")) {
         std::map<std::string,std::string> options;
         options["width"] = "8";
@@ -2527,17 +3099,48 @@ action_pattern (int argc, const char *argv[])
         std::vector<float> color2 (nchans, 1.0f);
         Strutil::extract_from_list_string (color1, options["color1"]);
         Strutil::extract_from_list_string (color2, options["color2"]);
-        bool ok = ImageBufAlgo::checker (ib, width, height, depth,
-                                         &color1[0], &color2[0], 0, 0, 0);
-        if (! ok)
-            ot.error (argv[0], ib.geterror());
+        ok = ImageBufAlgo::checker (ib, width, height, depth,
+                                    &color1[0], &color2[0], 0, 0, 0);
+    } else if (Strutil::istarts_with(pattern, "noise")) {
+        std::map<std::string,std::string> options;
+        options["type"] = "gaussian";
+        options["min"] = "0.5";
+        options["max"] = "1";
+        options["mean"] = "0.5";
+        options["stddev"] = "0.1";
+        options["portion"] = "0.01";
+        options["value"] = "0";
+        options["mono"] = "0";
+        options["seed"] = "0";
+        extract_options (options, pattern);
+        std::string type = options["type"];
+        float A = 0, B = 1;
+        bool ok = true;
+        if (type == "gaussian") {
+            A = Strutil::from_string<float> (options["mean"]);
+            B = Strutil::from_string<float> (options["stddev"]);
+        } else if (type == "uniform") {
+            A = Strutil::from_string<float> (options["min"]);
+            B = Strutil::from_string<float> (options["max"]);
+        } else if (type == "salt") {
+            A = Strutil::from_string<float> (options["value"]);
+            B = Strutil::from_string<float> (options["portion"]);
+        } else {
+            ot.error (command, Strutil::format ("Unknown noise type \"%s\"", type));
+            ok = false;
+        }
+        bool mono = Strutil::from_string<int> (options["mono"]);
+        int seed = Strutil::from_string<int> (options["seed"]);
+        ImageBufAlgo::zero (ib);
+        if (ok)
+            ok = ImageBufAlgo::noise (ib, type, A, B, mono, seed);
     } else {
-        bool ok = ImageBufAlgo::zero (ib);
-        if (! ok)
-            ot.error (argv[0], ib.geterror());
+        ok = ImageBufAlgo::zero (ib);
+        ot.warning (command, Strutil::format("Unknown pattern \"%s\"", pattern));
     }
-    ot.push (img);
-    ot.function_times["pattern"] += timer();
+    if (! ok)
+        ot.error (command, ib.geterror());
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2548,6 +3151,9 @@ action_kernel (int argc, const char *argv[])
 {
     ASSERT (argc == 3);
     Timer timer (ot.enable_function_timing);
+    string_view command    = ot.express (argv[0]);
+    string_view kernelname = ot.express (argv[1]);
+    string_view kernelsize = ot.express (argv[2]);
     int nchans = 1;
     if (nchans < 1 || nchans > 1024) {
         ot.warning (argv[0], Strutil::format ("Invalid number of channels: %d", nchans));
@@ -2555,19 +3161,19 @@ action_kernel (int argc, const char *argv[])
     }
 
     float w = 1.0f, h = 1.0f;
-    if (sscanf (argv[2], "%fx%f", &w, &h) != 2)
-        ot.error ("kernel", Strutil::format ("Unknown size %s", argv[2]));
+    if (sscanf (kernelsize.c_str(), "%fx%f", &w, &h) != 2)
+        ot.error (command, Strutil::format ("Unknown size %s", kernelsize));
 
     ImageSpec spec (1, 1, nchans, TypeDesc::FLOAT);
     ImageRecRef img (new ImageRec ("kernel", spec, ot.imagecache));
     ImageBuf &ib ((*img)());
-    int ok = ImageBufAlgo::make_kernel (ib, argv[1], w, h);
+    int ok = ImageBufAlgo::make_kernel (ib, kernelname, w, h);
     if (! ok)
-        ot.error (argv[0], ib.geterror());
+        ot.error (command, ib.geterror());
     img->update_spec_from_imagebuf (0, 0);
 
     ot.push (img);
-    ot.function_times["kernel"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2578,24 +3184,19 @@ action_capture (int argc, const char *argv[])
 {
     ASSERT (argc == 1);
     Timer timer (ot.enable_function_timing);
-    int camera = 0;
-
-    std::string cmd = argv[0];
-    size_t pos;
-    while ((pos = cmd.find_first_of(":")) != std::string::npos) {
-        cmd = cmd.substr (pos+1, std::string::npos);
-        if (Strutil::istarts_with(cmd,"camera="))
-            camera = atoi(cmd.c_str()+7);
-    }
+    string_view command = ot.express (argv[0]);
+    std::map<std::string,std::string> options;
+    extract_options (options, command);
+    int camera = Strutil::from_string<int> (options["camera"]);
 
     ImageBuf ib;
     bool ok = ImageBufAlgo::capture_image (ib, camera, TypeDesc::FLOAT);
     if (! ok)
-        ot.error (argv[0], ib.geterror());
+        ot.error (command, ib.geterror());
     ImageRecRef img (new ImageRec ("capture", ib.spec(), ot.imagecache));
     (*img)().copy (ib);
     ot.push (img);
-    ot.function_times["capture"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2607,6 +3208,8 @@ action_crop (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_crop, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view size    = ot.express (argv[1]);
 
     ot.read ();
     ImageRecRef A = ot.curimg;
@@ -2614,7 +3217,7 @@ action_crop (int argc, const char *argv[])
     ImageSpec newspec = Aspec;
 
     ot.adjust_geometry (argv[0], newspec.width, newspec.height,
-                        newspec.x, newspec.y, argv[1]);
+                        newspec.x, newspec.y, size.c_str());
     if (newspec.width != Aspec.width || newspec.height != Aspec.height) {
         // resolution changed -- we need to do a full crop
         ot.pop();
@@ -2623,7 +3226,7 @@ action_crop (int argc, const char *argv[])
         ImageBuf &Rib ((*ot.curimg)(0,0));
         bool ok = ImageBufAlgo::crop (Rib, Aib, get_roi(newspec));
         if (! ok)
-            ot.error (argv[0], Rib.geterror());
+            ot.error (command, Rib.geterror());
     } else if (newspec.x != Aspec.x || newspec.y != Aspec.y) {
         // only offset changed; don't copy the image or crop, simply
         // adjust the origins.
@@ -2632,7 +3235,7 @@ action_crop (int argc, const char *argv[])
         A->metadata_modified (true);
     }
 
-    ot.function_times["crop"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2644,6 +3247,7 @@ action_croptofull (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_croptofull, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ot.read ();
     ImageRecRef A = ot.curimg;
@@ -2656,7 +3260,45 @@ action_croptofull (int argc, const char *argv[])
     bool old_enable_function_timing = ot.enable_function_timing;
     ot.enable_function_timing = false;
     int result = action_crop (2, newargv);
-    ot.function_times["croptofull"] += timer();
+    ot.function_times[command] += timer();
+    ot.enable_function_timing = old_enable_function_timing;
+    return result;
+}
+
+
+
+int
+action_trim (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_trim, argc, argv))
+        return 0;
+    Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+
+    ot.read ();
+    ImageRecRef A = ot.curimg;
+
+    // Implement by calling action_crop with a geometry specifier built
+    // from examining the nonzero region of the image.
+    ROI origroi = get_roi(*A->spec(0,0));
+    ROI roi = ImageBufAlgo::nonzero_region ((*A)(0,0), origroi);
+    if (roi.npixels() == 0) {
+        // Special case -- all zero; but doctor to make it 1 zero pixel
+        roi = origroi;
+        roi.xend = roi.xbegin+1;
+        roi.yend = roi.ybegin+1;
+        roi.zend = roi.zbegin+1;
+    }
+    std::string crop = (A->spec(0,0)->depth == 1)
+            ? format_resolution (roi.width(), roi.height(),
+                                 roi.xbegin, roi.ybegin)
+            : format_resolution (roi.width(), roi.height(), roi.depth(),
+                                 roi.xbegin, roi.ybegin, roi.zbegin);
+    const char *newargv[2] = { "crop", crop.c_str() };
+    bool old_enable_function_timing = ot.enable_function_timing;
+    ot.enable_function_timing = false;
+    int result = action_crop (2, newargv);
+    ot.function_times[command] += timer();
     ot.enable_function_timing = old_enable_function_timing;
     return result;
 }
@@ -2669,6 +3311,8 @@ action_cut (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_cut, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view size    = ot.express (argv[1]);
 
     ot.read ();
     ImageRecRef A = ot.pop();
@@ -2676,7 +3320,7 @@ action_cut (int argc, const char *argv[])
     ImageSpec newspec = Aspec;
 
     ot.adjust_geometry (argv[0], newspec.width, newspec.height,
-                        newspec.x, newspec.y, argv[1]);
+                        newspec.x, newspec.y, size.c_str());
 
     ImageRecRef R (new ImageRec (A->name(), newspec, ot.imagecache));
     const ImageBuf &Aib ((*A)(0,0));
@@ -2690,7 +3334,7 @@ action_cut (int argc, const char *argv[])
 
     ot.push (R);
 
-    ot.function_times["cut"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2702,14 +3346,16 @@ action_resample (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_resample, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view size    = ot.express (argv[1]);
 
     ot.read ();
     ImageRecRef A = ot.pop();
     const ImageSpec &Aspec (*A->spec(0,0));
     ImageSpec newspec = Aspec;
 
-    ot.adjust_geometry (argv[0], newspec.width, newspec.height,
-                        newspec.x, newspec.y, argv[1], true);
+    ot.adjust_geometry (command, newspec.width, newspec.height,
+                        newspec.x, newspec.y, size.c_str(), true);
     if (newspec.width == Aspec.width && newspec.height == Aspec.height) {
         ot.push (A);  // Restore the original image
         return 0;  // nothing to do
@@ -2728,9 +3374,9 @@ action_resample (int argc, const char *argv[])
     ImageBuf &Rib ((*ot.curimg)(0,0));
     bool ok = ImageBufAlgo::resample (Rib, Aib);
     if (! ok)
-        ot.error (argv[0], Rib.geterror());
+        ot.error (command, Rib.geterror());
 
-    ot.function_times["resample"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2742,16 +3388,11 @@ action_resize (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_resize, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
-
-    std::string filtername;
-    std::string cmd = argv[0];
-    size_t pos;
-    while ((pos = cmd.find_first_of(":")) != std::string::npos) {
-        cmd = cmd.substr (pos+1, std::string::npos);
-        if (! strncmp (cmd.c_str(), "filter=", 7)) {
-            filtername = cmd.substr (7, std::string::npos);
-        }
-    }
+    string_view command = ot.express (argv[0]);
+    string_view size    = ot.express (argv[1]);
+    std::map<std::string,std::string> options;
+    extract_options (options, command);
+    string_view filtername = options["filter"];
 
     ot.read ();
     ImageRecRef A = ot.pop();
@@ -2759,7 +3400,7 @@ action_resize (int argc, const char *argv[])
     ImageSpec newspec = Aspec;
 
     ot.adjust_geometry (argv[0], newspec.width, newspec.height,
-                        newspec.x, newspec.y, argv[1], true);
+                        newspec.x, newspec.y, size.c_str(), true);
     if (newspec.width == Aspec.width && newspec.height == Aspec.height) {
         ot.push (A);  // Restore the original image
         return 0;  // nothing to do
@@ -2784,9 +3425,9 @@ action_resize (int argc, const char *argv[])
     const ImageBuf &Aib ((*A)(0,0));
     ImageBuf &Rib ((*ot.curimg)(0,0));
     bool ok = ImageBufAlgo::resize (Rib, Aib, filtername, 0.0f, get_roi(Rib.spec()));
-    ot.function_times["resize"] += timer();
+    ot.function_times[command] += timer();
     if (! ok)
-        ot.error (argv[0], Rib.geterror());
+        ot.error (command, Rib.geterror());
     return 0;
 }
 
@@ -2800,6 +3441,8 @@ action_fit (int argc, const char *argv[])
     Timer timer (ot.enable_function_timing);
     bool old_enable_function_timing = ot.enable_function_timing;
     ot.enable_function_timing = false;
+    string_view command = ot.express (argv[0]);
+    string_view size    = ot.express (argv[1]);
 
     // Examine the top of stack
     ImageRecRef A = ot.top();
@@ -2812,13 +3455,13 @@ action_fit (int argc, const char *argv[])
     int fit_full_x = Aspec->full_x;
     int fit_full_y = Aspec->full_y;
     ot.adjust_geometry (argv[0], fit_full_width, fit_full_height,
-                        fit_full_x, fit_full_y, argv[1], false);
+                        fit_full_x, fit_full_y, size.c_str(), false);
 
     std::map<std::string,std::string> options;
-    extract_options (options, argv[0]);
-    std::string padopt = options["pad"];
+    extract_options (options, command);
+    string_view padopt = options["pad"];
     bool pad = padopt.size() && atoi(padopt.c_str());
-    std::string filtername = options["filter"];
+    string_view filtername = options["filter"];
     
     // Compute scaling factors and use action_resize to do the heavy lifting
     float oldaspect = float(Aspec->full_width) / Aspec->full_height;
@@ -2876,7 +3519,7 @@ action_fit (int argc, const char *argv[])
         action_croptofull (1, argv);
     }
 
-    ot.function_times["fit"] += timer();
+    ot.function_times[command] += timer();
     ot.enable_function_timing = old_enable_function_timing;
     return 0;
 }
@@ -2889,11 +3532,12 @@ action_convolve (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_convolve, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef K = ot.pop();  // kernel
     ImageRecRef A = ot.pop();
-    A->read();
-    K->read();
+    ot.read (A);
+    ot.read (K);
 
     ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0, 0,
                                  true /*writable*/, false /*copy_pixels*/));
@@ -2903,10 +3547,10 @@ action_convolve (int argc, const char *argv[])
         ImageBuf &Rib ((*R)(s));
         bool ok = ImageBufAlgo::convolve (Rib, (*A)(s), (*K)(0));
         if (! ok)
-            ot.error ("convolve", Rib.geterror());
+            ot.error (command, Rib.geterror());
     }
 
-    ot.function_times["convolve"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2918,22 +3562,23 @@ action_blur (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_blur, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view kernelsize = ot.express(argv[1]);
 
     std::map<std::string,std::string> options;
     options["kernel"] = "gaussian";
-    extract_options (options, argv[0]);
-    std::string kernopt = options["kernel"];
+    extract_options (options, command);
+    string_view kernopt = options["kernel"];
 
     float w = 1.0f, h = 1.0f;
-    if (sscanf (argv[1], "%fx%f", &w, &h) != 2)
-        ot.error ("blur", Strutil::format ("Unknown size %s", argv[1]));
+    if (sscanf (kernelsize.c_str(), "%fx%f", &w, &h) != 2)
+        ot.error (command, Strutil::format ("Unknown size %s", kernelsize));
     ImageBuf Kernel ("kernel");
     if (! ImageBufAlgo::make_kernel (Kernel, kernopt.c_str(), w, h))
-        ot.error ("blur", Kernel.geterror());
+        ot.error (command, Kernel.geterror());
 
     ImageRecRef A = ot.pop();
-    A->read();
-
+    ot.read (A);
     ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0, 0,
                                  true /*writable*/, false /*copy_pixels*/));
     ot.push (R);
@@ -2942,10 +3587,10 @@ action_blur (int argc, const char *argv[])
         ImageBuf &Rib ((*R)(s));
         bool ok = ImageBufAlgo::convolve (Rib, (*A)(s), Kernel);
         if (! ok)
-            ot.error ("blur", Rib.geterror());
+            ot.error (command, Rib.geterror());
     }
 
-    ot.function_times["blur"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2957,13 +3602,15 @@ action_median (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_median, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view size    = ot.express (argv[1]);
 
     int w = 3, h = 3;
-    if (sscanf (argv[1], "%dx%d", &w, &h) != 2)
-        ot.error ("median", Strutil::format ("Unknown size %s", argv[1]));
+    if (sscanf (size.c_str(), "%dx%d", &w, &h) != 2)
+        ot.error (command, Strutil::format ("Unknown size %s", size));
 
     ImageRecRef A = ot.pop();
-    A->read();
+    ot.read (A);
 
     ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0, 0,
                                  true /*writable*/, false /*copy_pixels*/));
@@ -2973,10 +3620,10 @@ action_median (int argc, const char *argv[])
         ImageBuf &Rib ((*R)(s));
         bool ok = ImageBufAlgo::median_filter (Rib, (*A)(s), w, h);
         if (! ok)
-            ot.error ("median", Rib.geterror());
+            ot.error (command, Rib.geterror());
     }
 
-    ot.function_times["median"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -2988,20 +3635,21 @@ action_unsharp (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_unsharp, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     std::map<std::string,std::string> options;
     options["kernel"] = "gaussian";
     options["width"] = "3";
     options["contrast"] = "1";
     options["threshold"] = "0";
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     std::string kernel = options["kernel"];
     float width = Strutil::from_string<float> (options["width"]);
     float contrast = Strutil::from_string<float> (options["contrast"]);
     float threshold = Strutil::from_string<float> (options["threshold"]);
 
     ImageRecRef A = ot.pop();
-    A->read();
+    ot.read (A);
     ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0, 0,
                                  true /*writable*/, false /*copy_pixels*/));
     ot.push (R);
@@ -3011,10 +3659,10 @@ action_unsharp (int argc, const char *argv[])
         bool ok = ImageBufAlgo::unsharp_mask (Rib, (*A)(s), kernel.c_str(),
                                               width, contrast, threshold);
         if (! ok)
-            ot.error ("unsharp", Rib.geterror());
+            ot.error (command, Rib.geterror());
     }
 
-    ot.function_times["unsharp"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3026,9 +3674,10 @@ action_fft (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_fft, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A = ot.pop();
-    A->read();
+    ot.read (A);
     ImageRecRef R (new ImageRec ("fft", ot.allsubimages ? A->subimages() : 1));
     ot.push (R);
 
@@ -3037,10 +3686,10 @@ action_fft (int argc, const char *argv[])
         bool ok = ImageBufAlgo::fft (Rib, (*A)(s));
         R->update_spec_from_imagebuf (s);
         if (! ok)
-            ot.error ("fft", Rib.geterror());
+            ot.error (command, Rib.geterror());
     }
 
-    ot.function_times["fft"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3052,9 +3701,10 @@ action_ifft (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_ifft, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A = ot.pop();
-    A->read();
+    ot.read (A);
     ImageRecRef R (new ImageRec ("ifft", ot.allsubimages ? A->subimages() : 1));
     ot.push (R);
 
@@ -3063,10 +3713,10 @@ action_ifft (int argc, const char *argv[])
         bool ok = ImageBufAlgo::ifft (Rib, (*A)(s));
         R->update_spec_from_imagebuf (s);
         if (! ok)
-            ot.error ("ifft", Rib.geterror());
+            ot.error (command, Rib.geterror());
     }
 
-    ot.function_times["ifft"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3078,6 +3728,7 @@ action_polar (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_polar, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ot.read ();
     ImageRecRef A = ot.pop();
@@ -3088,9 +3739,9 @@ action_polar (int argc, const char *argv[])
         for (int m = 0, miplevels = R->miplevels(s);  m < miplevels;  ++m) {
             bool ok = ImageBufAlgo::complex_to_polar ((*R)(s,m), (*A)(s,m));
             if (! ok)
-                ot.error ("polar", (*R)(s,m).geterror());
+                ot.error (command, (*R)(s,m).geterror());
         }
-    ot.function_times["polar"] += timer();             
+    ot.function_times[command] += timer();             
     return 0;
 }
 
@@ -3102,6 +3753,7 @@ action_unpolar (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_unpolar, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ot.read ();
     ImageRecRef A = ot.pop();
@@ -3112,9 +3764,9 @@ action_unpolar (int argc, const char *argv[])
         for (int m = 0, miplevels = R->miplevels(s);  m < miplevels;  ++m) {
             bool ok = ImageBufAlgo::polar_to_complex ((*R)(s,m), (*A)(s,m));
             if (! ok)
-                ot.error ("unpolar", (*R)(s,m).geterror());
+                ot.error (command, (*R)(s,m).geterror());
         }
-    ot.function_times["unpolar"] += timer();             
+    ot.function_times[command] += timer();             
     return 0;
 }
 
@@ -3126,14 +3778,16 @@ action_fixnan (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_fixnan, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command  = ot.express (argv[0]);
+    string_view modename = ot.express (argv[1]);
 
     NonFiniteFixMode mode = NONFINITE_BOX3;
-    if (!strcmp(argv[1], "black"))
+    if (modename == "black")
         mode = NONFINITE_BLACK;
-    else if (!strcmp(argv[1], "box3"))
+    else if (modename == "box3")
         mode = NONFINITE_BOX3;
     else {
-        ot.warning (argv[0], Strutil::format ("\"%s\" not recognized. Valid choices: black, box3.", argv[1]));
+        ot.warning (argv[0], Strutil::format ("\"%s\" not recognized. Valid choices: black, box3.", modename));
     }
     ot.read ();
     ImageRecRef A = ot.pop();
@@ -3147,11 +3801,11 @@ action_fixnan (int argc, const char *argv[])
             ImageBuf &Rib ((*ot.curimg)(s,m));
             bool ok = ImageBufAlgo::fixNonFinite (Rib, Aib, mode);
             if (! ok)
-                ot.error (argv[0], Rib.geterror());
+                ot.error (command, Rib.geterror());
         }
     }
              
-    ot.function_times["fixnan"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3163,6 +3817,7 @@ action_fillholes (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_fillholes, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     // Read and copy the top-of-stack image
     ImageRecRef A (ot.pop());
@@ -3174,9 +3829,9 @@ action_fillholes (int argc, const char *argv[])
     ImageBuf &Rib ((*B)(0,0));
     bool ok = ImageBufAlgo::fillholes_pushpull (Rib, (*A)(0,0));
     if (! ok)
-        ot.error (argv[0], Rib.geterror());
+        ot.error (command, Rib.geterror());
 
-    ot.function_times["fillholes"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3188,6 +3843,8 @@ action_paste (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_paste, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command  = ot.express (argv[0]);
+    string_view position = ot.express (argv[1]);
 
     ImageRecRef BG (ot.pop());
     ImageRecRef FG (ot.pop());
@@ -3195,8 +3852,8 @@ action_paste (int argc, const char *argv[])
     ot.read (FG);
 
     int x = 0, y = 0;
-    if (sscanf (argv[1], "%d%d", &x, &y) != 2) {
-        ot.error ("paste", Strutil::format ("Invalid offset '%s'", argv[1]));
+    if (sscanf (position.c_str(), "%d%d", &x, &y) != 2) {
+        ot.error (command, Strutil::format ("Invalid offset '%s'", position));
         return 0;
     }
 
@@ -3205,8 +3862,8 @@ action_paste (int argc, const char *argv[])
 
     bool ok = ImageBufAlgo::paste ((*R)(), x, y, 0, 0, (*FG)());
     if (! ok)
-        ot.error (argv[0], (*R)().geterror());
-    ot.function_times["paste"] += timer();
+        ot.error (command, (*R)().geterror());
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3217,10 +3874,12 @@ action_mosaic (int argc, const char *argv[])
 {
     // Mosaic is tricky. We have to parse the argument before we know
     // how many images it wants to pull off the stack.
+    string_view command = ot.express (argv[0]);
+    string_view size    = ot.express (argv[1]);
     int ximages = 0, yimages = 0;
-    if (sscanf (argv[1], "%dx%d", &ximages, &yimages) != 2 
+    if (sscanf (size.c_str(), "%dx%d", &ximages, &yimages) != 2 
           || ximages < 1 || yimages < 1) {
-        ot.error ("mosaic", Strutil::format ("Invalid size '%s'", argv[1]));
+        ot.error (command, Strutil::format ("Invalid size '%s'", size));
         return 0;
     }
     int nimages = ximages * yimages;
@@ -3242,7 +3901,7 @@ action_mosaic (int argc, const char *argv[])
 
     std::map<std::string,std::string> options;
     options["pad"] = "0";
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     int pad = strtol (options["pad"].c_str(), NULL, 10);
 
     ImageSpec Rspec (ximages*widest + (ximages-1)*pad,
@@ -3259,11 +3918,11 @@ action_mosaic (int argc, const char *argv[])
             bool ok = ImageBufAlgo::paste ((*R)(), x, y, 0, 0,
                                            (*images[j*ximages+i])(0));
             if (! ok)
-                ot.error (argv[0], (*R)().geterror());
+                ot.error (command, (*R)().geterror());
         }
     }
 
-    ot.function_times["mosaic"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3275,6 +3934,7 @@ action_over (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_over, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef B (ot.pop());
     ImageRecRef A (ot.pop());
@@ -3295,8 +3955,8 @@ action_over (int argc, const char *argv[])
 
     bool ok = ImageBufAlgo::over (Rib, Aib, Bib);
     if (! ok)
-        ot.error (argv[0], Rib.geterror());
-    ot.function_times["over"] += timer();
+        ot.error (command, Rib.geterror());
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3308,6 +3968,7 @@ action_zover (int argc, const char *argv[])
     if (ot.postpone_callback (2, action_zover, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     // Get optional flags
     bool z_zeroisinf = false;
@@ -3338,8 +3999,8 @@ action_zover (int argc, const char *argv[])
 
     bool ok = ImageBufAlgo::zover (Rib, Aib, Bib, z_zeroisinf);
     if (! ok)
-        ot.error (argv[0], Rib.geterror());
-    ot.function_times["zover"] += timer();
+        ot.error (command, Rib.geterror());
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3351,6 +4012,7 @@ action_flatten (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_flatten, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A (ot.pop());
     ot.read (A);
@@ -3366,8 +4028,8 @@ action_flatten (int argc, const char *argv[])
 
     bool ok = ImageBufAlgo::flatten (Rib, Aib);
     if (! ok)
-        ot.error (argv[0], Rib.geterror());
-    ot.function_times["flatten"] += timer();
+        ot.error (command, Rib.geterror());
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3379,6 +4041,8 @@ action_fill (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_fill, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view size    = ot.express (argv[1]);
 
     // Read and copy the top-of-stack image
     ImageRecRef A (ot.pop());
@@ -3389,37 +4053,49 @@ action_fill (int argc, const char *argv[])
 
     int w = Rib.spec().width, h = Rib.spec().height;
     int x = Rib.spec().x, y = Rib.spec().y;
-    if (! ot.adjust_geometry (argv[0], w, h, x, y, argv[1], true)) {
+    if (! ot.adjust_geometry (argv[0], w, h, x, y, size.c_str(), true)) {
         return 0;
     }
 
-    float *color = ALLOCA (float, Rspec.nchannels);
-    for (int c = 0;  c < Rspec.nchannels;  ++c)
-        color[c] = 1.0f;
+    std::vector<float> topleft (Rspec.nchannels, 1.0f);
+    std::vector<float> topright (Rspec.nchannels, 1.0f);
+    std::vector<float> bottomleft (Rspec.nchannels, 1.0f);
+    std::vector<float> bottomright (Rspec.nchannels, 1.0f);
 
-    // Parse optional arguments for overrides
-    std::string command = argv[0];
-    size_t pos;
-    while ((pos = command.find_first_of(":")) != std::string::npos) {
-        command = command.substr (pos+1, std::string::npos);
-        if (Strutil::istarts_with(command,"color=")) {
-            // Parse comma-separated color list
-            size_t numpos = 6;
-            for (int c = 0; c < Rspec.nchannels && numpos < command.size() && command[numpos] != ':'; ++c) {
-                color[c] = (float) atof (command.c_str()+numpos);
-                while (numpos < command.size() && command[numpos] != ':' && command[numpos] != ',')
-                    ++numpos;
-                if (numpos < command.size())
-                    ++numpos;
-            }
-        }
+    std::map<std::string,std::string> options;
+    extract_options (options, command);
+
+    bool ok = true;
+    if (Strutil::extract_from_list_string (topleft,     options["topleft"]) &&
+        Strutil::extract_from_list_string (topright,    options["topright"]) &&
+        Strutil::extract_from_list_string (bottomleft,  options["bottomleft"]) &&
+        Strutil::extract_from_list_string (bottomright, options["bottomright"])) {
+        ok = ImageBufAlgo::fill (Rib, &topleft[0], &topright[0],
+                                 &bottomleft[0], &bottomright[0],
+                                 ROI(x, x+w, y, y+h));
     }
-
-    bool ok = ImageBufAlgo::fill (Rib, color, ROI(x, x+w, y, y+h));
+    else if (Strutil::extract_from_list_string (topleft,    options["top"]) &&
+             Strutil::extract_from_list_string (bottomleft, options["bottom"])) {
+        ok = ImageBufAlgo::fill (Rib, &topleft[0], &bottomleft[0],
+                                 ROI(x, x+w, y, y+h));
+    }
+    else if (Strutil::extract_from_list_string (topleft,  options["left"]) &&
+             Strutil::extract_from_list_string (topright, options["right"])) {
+        ok = ImageBufAlgo::fill (Rib, &topleft[0], &topright[0],
+                                 &topleft[0], &topright[0],
+                                 ROI(x, x+w, y, y+h));
+    }
+    else if (Strutil::extract_from_list_string (topleft, options["color"])) {
+        ok = ImageBufAlgo::fill (Rib, &topleft[0], ROI(x, x+w, y, y+h));
+    }
+    else {
+        ot.warning (command, "No recognized fill parameters: filling with white.");
+        ok = ImageBufAlgo::fill (Rib, &topleft[0], ROI(x, x+w, y, y+h));
+    }
     if (! ok)
-        ot.error (argv[0], Rib.geterror());
+        ot.error (command, Rib.geterror());
 
-    ot.function_times["fill"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3431,9 +4107,10 @@ action_clamp (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_clamp, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     ImageRecRef A = ot.pop();
-    A->read ();
+    ot.read (A);
     ImageRecRef R (new ImageRec (*A, ot.allsubimages ? -1 : 0,
                                  ot.allsubimages ? -1 : 0,
                                  true /*writeable*/, false /*copy_pixels*/));
@@ -3445,7 +4122,7 @@ action_clamp (int argc, const char *argv[])
         std::vector<float> max (nchans, big);
         std::map<std::string,std::string> options;
         options["clampalpha"] = "0";  // initialize
-        extract_options (options, argv[0]);
+        extract_options (options, command);
         Strutil::extract_from_list_string (min, options["min"]);
         Strutil::extract_from_list_string (max, options["max"]);
         bool clampalpha01 = strtol (options["clampalpha"].c_str(), NULL, 10) != 0;
@@ -3455,11 +4132,11 @@ action_clamp (int argc, const char *argv[])
             ImageBuf &Aib ((*A)(s,m));
             bool ok = ImageBufAlgo::clamp (Rib, Aib, &min[0], &max[0], clampalpha01);
             if (! ok)
-                ot.error (argv[0], Rib.geterror());
+                ot.error (command, Rib.geterror());
         }
     }
 
-    ot.function_times["clamp"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3471,9 +4148,10 @@ action_rangecompress (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_rangecompress, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     std::map<std::string,std::string> options;
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     std::string useluma_str = options["luma"];
     bool useluma = useluma_str.size() && atoi(useluma_str.c_str()) != 0;
 
@@ -3487,11 +4165,11 @@ action_rangecompress (int argc, const char *argv[])
         for (int m = 0, miplevels = R->miplevels(s);  m < miplevels;  ++m) {
             bool ok = ImageBufAlgo::rangecompress ((*R)(s,m), (*A)(s,m), useluma);
             if (! ok)
-                ot.error (argv[0], (*R)(s,m).geterror());
+                ot.error (command, (*R)(s,m).geterror());
         }
     }
 
-    ot.function_times["rangecompress"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3503,9 +4181,10 @@ action_rangeexpand (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_rangeexpand, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
 
     std::map<std::string,std::string> options;
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     std::string useluma_str = options["luma"];
     bool useluma = useluma_str.size() && atoi(useluma_str.c_str()) != 0;
 
@@ -3519,11 +4198,11 @@ action_rangeexpand (int argc, const char *argv[])
         for (int m = 0, miplevels = R->miplevels(s);  m < miplevels;  ++m) {
             bool ok = ImageBufAlgo::rangeexpand ((*R)(s,m), (*A)(s,m), useluma);
             if (! ok)
-                ot.error (argv[0], (*R)(s,m).geterror());
+                ot.error (command, (*R)(s,m).geterror());
         }
     }
 
-    ot.function_times["rangeexpand"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3535,6 +4214,8 @@ action_text (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_text, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view text    = ot.express (argv[1]);
 
     // Read and copy the top-of-stack image
     ImageRecRef A (ot.pop());
@@ -3545,7 +4226,7 @@ action_text (int argc, const char *argv[])
 
     // Set up defaults for text placement, size, font, color
     std::map<std::string,std::string> options;
-    extract_options (options, argv[0]);
+    extract_options (options, command);
     int x = options["x"].size() ? Strutil::from_string<int>(options["x"]) : (Rspec.x + Rspec.width/2);
     int y = options["y"].size() ? Strutil::from_string<int>(options["y"]) : (Rspec.y + Rspec.height/2);
     int fontsize = options["size"].size() ? Strutil::from_string<int>(options["size"]) : 16;
@@ -3553,12 +4234,12 @@ action_text (int argc, const char *argv[])
     std::vector<float> textcolor (Rspec.nchannels, 1.0f);
     Strutil::extract_from_list_string (textcolor, options["color"]);
 
-    bool ok = ImageBufAlgo::render_text (Rib, x, y, argv[1] /* the text */,
+    bool ok = ImageBufAlgo::render_text (Rib, x, y, text,
                                          fontsize, font, &textcolor[0]);
     if (! ok)
-        ot.error (argv[0], Rib.geterror());
+        ot.error (command, Rib.geterror());
 
-    ot.function_times["text"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3598,29 +4279,22 @@ action_histogram (int argc, const char *argv[])
     if (ot.postpone_callback (1, action_histogram, argc, argv))
         return 0;
     Timer timer (ot.enable_function_timing);
+    string_view command = ot.express (argv[0]);
+    string_view size = ot.express(argv[1]);
+    int channel = Strutil::from_string<int> (ot.express(argv[2]));
+    std::map<std::string,std::string> options;
+    extract_options (options, command);
+    int cumulative = Strutil::from_string<int> (options["cumulative"]);
 
     // Input image.
     ot.read ();
     ImageRecRef A (ot.pop());
     const ImageBuf &Aib ((*A)());
 
-    // Get arguments from command line.
-    const char *size = argv[1];
-    int channel = atoi (argv[2]);
-
-    int cumulative = 0;
-    std::string cmd = argv[0];
-    size_t pos;
-    while ((pos = cmd.find_first_of(":")) != std::string::npos) {
-        cmd = cmd.substr (pos+1, std::string::npos);
-        if (Strutil::istarts_with(cmd,"cumulative="))
-            cumulative = atoi(cmd.c_str()+11);
-    }
-
     // Extract bins and height from size.
     int bins = 0, height = 0;
-    if (sscanf (size, "%dx%d", &bins, &height) != 2) {
-        ot.error (argv[0], Strutil::format ("Invalid size: %s", size));
+    if (sscanf (size.c_str(), "%dx%d", &bins, &height) != 2) {
+        ot.error (command, Strutil::format ("Invalid size: %s", size));
         return -1;
     }
 
@@ -3628,7 +4302,7 @@ action_histogram (int argc, const char *argv[])
     std::vector<imagesize_t> hist;
     bool ok = ImageBufAlgo::histogram (Aib, channel, hist, bins);
     if (! ok) {
-        ot.error (argv[0], Aib.geterror());
+        ot.error (command, Aib.geterror());
         return 0;
     }
 
@@ -3644,9 +4318,9 @@ action_histogram (int argc, const char *argv[])
 
     ok = ImageBufAlgo::histogram_draw (Rib, hist);
     if (! ok)
-        ot.error (argv[0], Rib.geterror());
+        ot.error (command, Rib.geterror());
 
-    ot.function_times["histogram"] += timer();
+    ot.function_times[command] += timer();
     return 0;
 }
 
@@ -3716,7 +4390,7 @@ getargs (int argc, char *argv[])
                 "--dumpdata %@", set_dumpdata, NULL, "Print all pixel data values (options: empty=0)",
                 "--hash", &ot.hash, "Print SHA-1 hash of each input image",
                 "--colorcount %@ %s", action_colorcount, NULL,
-                    "Count of how many pixels have the given color (argument: color;color;...) (optional args: eps=color)",
+                    "Count of how many pixels have the given color (argument: color;color;...) (options: eps=color)",
                 "--rangecheck %@ %s %s", action_rangecheck, NULL, NULL,
                     "Count of how many pixels are outside the low and high color arguments (each is a comma-separated color value list)",
 //                "-u", &ot.updatemode, "Update mode: skip outputs when the file exists and is newer than all inputs",
@@ -3732,13 +4406,14 @@ getargs (int argc, char *argv[])
                 "--autopremult %@", set_autopremult, NULL, "Turn on automatic premultiplication of images with unassociated alpha",
                 "--autoorient", &ot.autoorient, "Automatically --reorient all images upon input",
                 "--auto-orient", &ot.autoorient, "", // symonym for --autoorient
+                "--native", &ot.nativeread, "Force native data type reads if cache would lose precision",
                 "<SEPARATOR>", "Commands that write images:",
                 "-o %@ %s", output_file, NULL, "Output the current image to the named file",
                 "<SEPARATOR>", "Options that affect subsequent image output:",
                 "-d %@ %s", set_dataformat, NULL,
                     "'-d TYPE' sets the output data format of all channels, "
                     "'-d CHAN=TYPE' overrides a single named channel (multiple -d args are allowed). "
-                    "Data types include: uint8, sint8, uint10, uint12, uint16, sint16, half, float, double",
+                    "Data types include: uint8, sint8, uint10, uint12, uint16, sint16, uint32, sint32, half, float, double",
                 "--scanline", &ot.output_scanline, "Output scanline images",
                 "--tile %@ %d %d", output_tiles, &ot.output_tilewidth, &ot.output_tileheight,
                     "Output tiled images (tilewidth, tileheight)",
@@ -3786,7 +4461,7 @@ getargs (int argc, char *argv[])
                 "--create %@ %s %d", action_create, NULL, NULL,
                         "Create a blank image (args: geom, channels)",
                 "--pattern %@ %s %s %d", action_pattern, NULL, NULL, NULL,
-                        "Create a patterned image (args: pattern, geom, channels)",
+                        "Create a patterned image (args: pattern, geom, channels). Patterns: black, fill, checker, noise",
                 "--kernel %@ %s %s", action_kernel, NULL, NULL,
                         "Create a centered convolution kernel (args: name, geom)",
                 "--capture %@", action_capture, NULL,
@@ -3794,16 +4469,27 @@ getargs (int argc, char *argv[])
                 "--diff %@", action_diff, NULL, "Print report on the difference of two images (modified by --fail, --failpercent, --hardfail, --warn, --warnpercent --hardwarn)",
                 "--pdiff %@", action_pdiff, NULL, "Print report on the perceptual difference of two images (modified by --fail, --failpercent, --hardfail, --warn, --warnpercent --hardwarn)",
                 "--add %@", action_add, NULL, "Add two images",
+                "--addc %s %@", action_addc, NULL, "Add to all channels a scalar or per-channel constants (e.g.: 0.5 or 1,1.25,0.5)",
+                "--cadd %s %@", action_addc, NULL, "", // Deprecated synonym
                 "--sub %@", action_sub, NULL, "Subtract two images",
-                "--abs %@", action_abs, NULL, "Take the absolute value of the image pixels",
+                "--subc %s %@", action_subc, NULL, "Subtract from all channels a scalar or per-channel constants (e.g.: 0.5 or 1,1.25,0.5)",
+                "--csub %s %@", action_subc, NULL, "", // Deprecated synonym
                 "--mul %@", action_mul, NULL, "Multiply two images",
-                "--cadd %s %@", action_cadd, NULL, "Add to all channels a scalar or per-channel constants (e.g.: 0.5 or 1,1.25,0.5)",
-                "--cmul %s %@", action_cmul, NULL, "Multiply the image values by a scalar or per-channel constants (e.g.: 0.5 or 1,1.25,0.5)",
-                "--cpow %s %@", action_cpow, NULL, "Raise the image values to a scalar or per-channel power (e.g.: 2.2 or 2.2,2.2,2.2,1.0)",
+                "--mulc %s %@", action_mulc, NULL, "Multiply the image values by a scalar or per-channel constants (e.g.: 0.5 or 1,1.25,0.5)",
+                "--cmul %s %@", action_mulc, NULL, "", // Deprecated synonym
+                "--div %@", action_div, NULL, "Divide first image by second image",
+                "--divc %s %@", action_divc, NULL, "Divide the image values by a scalar or per-channel constants (e.g.: 0.5 or 1,1.25,0.5)",
+                "--abs %@", action_abs, NULL, "Take the absolute value of the image pixels",
+                "--absdiff %@", action_absdiff, NULL, "Absolute difference between two images",
+                "--absdiffc %s %@", action_absdiffc, NULL, "Absolute difference versus a scalar or per-channel constant (e.g.: 0.5 or 1,1.25,0.5)",
+                "--powc %s %@", action_powc, NULL, "Raise the image values to a scalar or per-channel power (e.g.: 2.2 or 2.2,2.2,2.2,1.0)",
+                "--cpow %s %@", action_powc, NULL, "", // Depcrcated synonym
+                "--noise %@", action_noise, NULL, "Add noise to an image (options: type=gaussian:mean=0:stddev=0.1, type=uniform:min=0:max=0.1, type=salt:value=0:portion=0.1, seed=0",
                 "--chsum %@", action_chsum, NULL,
                     "Turn into 1-channel image by summing channels (options: weight=r,g,...)",
                 "--crop %@ %s", action_crop, NULL, "Set pixel data resolution and offset, cropping or padding if necessary (WxH+X+Y or xmin,ymin,xmax,ymax)",
                 "--croptofull %@", action_croptofull, NULL, "Crop or pad to make pixel data region match the \"full\" region",
+                "--trim %@", action_trim, NULL, "Crop to the minimal ROI containing nonzero pixel values",
                 "--cut %@ %s", action_cut, NULL, "Cut out the ROI and reposition to the origin (WxH+X+Y or xmin,ymin,xmax,ymax)",
                 "--paste %@ %s", action_paste, NULL, "Paste fg over bg at the given position (e.g., +100+50)",
                 "--mosaic %@ %s", action_mosaic, NULL,
@@ -3821,10 +4507,10 @@ getargs (int argc, char *argv[])
                 "--transpose %@", action_transpose, NULL, "Transpose the image",
                 "--cshift %@ %s", action_cshift, NULL, "Circular shift the image (e.g.: +20-10)",
                 "--resample %@ %s", action_resample, NULL, "Resample (640x480, 50%)",
-                "--resize %@ %s", action_resize, NULL, "Resize (640x480, 50%) (optional args: filter=%s)",
-                "--fit %@ %s", action_fit, NULL, "Resize to fit within a window size (optional args: filter=%s, pad=%d)",
-                "--rotate %@ %g", action_rotate, NULL, "Rotate pixels (argument is degrees clockwise) around the center of the display window (optional args: filter=%s:center=%f,%f:recompute_roi=%d",
-                "--warp %@ %s", action_warp, NULL, "Warp pixels (argument is a 3x3 matrix, separated by commas) (optional args: filter=%s:,recompute_roi=%d",
+                "--resize %@ %s", action_resize, NULL, "Resize (640x480, 50%) (options: filter=%s)",
+                "--fit %@ %s", action_fit, NULL, "Resize to fit within a window size (options: filter=%s, pad=%d)",
+                "--rotate %@ %g", action_rotate, NULL, "Rotate pixels (argument is degrees clockwise) around the center of the display window (options: filter=%s, center=%f,%f, recompute_roi=%d",
+                "--warp %@ %s", action_warp, NULL, "Warp pixels (argument is a 3x3 matrix, separated by commas) (options: filter=%s, recompute_roi=%d)",
                 "--convolve %@", action_convolve, NULL,
                     "Convolve with a kernel",
                 "--blur %@ %s", action_blur, NULL,
@@ -3844,14 +4530,17 @@ getargs (int argc, char *argv[])
                 "--fixnan %@ %s", action_fixnan, NULL, "Fix NaN/Inf values in the image (options: none, black, box3)",
                 "--fillholes %@", action_fillholes, NULL,
                     "Fill in holes (where alpha is not 1)",
-                "--fill %@ %s", action_fill, NULL, "Fill a region (options: color=)",
                 "--clamp %@", action_clamp, NULL, "Clamp values (options: min=..., max=..., clampalpha=0)",
                 "--rangecompress %@", action_rangecompress, NULL,
                     "Compress the range of pixel values with a log scale (options: luma=0|1)",
                 "--rangeexpand %@", action_rangeexpand, NULL,
                     "Un-rangecompress pixel values back to a linear scale (options: luma=0|1)",
+                "--fill %@ %s", action_fill, NULL, "Fill a region (options: color=)",
                 "--text %@ %s", action_text, NULL,
                     "Render text into the current image (options: x=, y=, size=, color=)",
+                // "--noise_uniform %@", action_noise_uniform, NULL, "Add uniform noise to the image (options: min=, max=)",
+                // "--noise_gaussian %@", action_noise_gaussian, NULL, "Add Gaussian noise to the image (options: mean=, stddev=)",
+                // "--noise_salt %@", action_noise_saltpepp, NULL, "Add 'salt & pepper' noise to the image (options: min=, max=)",
                 "<SEPARATOR>", "Manipulating channels or subimages:",
                 "--ch %@ %s", action_channels, NULL,
                     "Select or shuffle channels (e.g., \"R,G,B\", \"B,G,R\", \"2,3,4\")",
@@ -3881,9 +4570,9 @@ getargs (int argc, char *argv[])
                 "--colorconvert %@ %s %s", action_colorconvert, NULL, NULL,
                     "Convert pixels from 'src' to 'dst' color space (without regard to its previous interpretation)",
                 "--ociolook %@ %s", action_ociolook, NULL,
-                    "Apply the named OCIO look (optional args: from=, to=, inverse=, key=, value=)",
+                    "Apply the named OCIO look (options: from=, to=, inverse=, key=, value=)",
                 "--ociodisplay %@ %s %s", action_ociodisplay, NULL, NULL,
-                    "Apply the named OCIO display and view (optional args: from=, looks=, key=, value=)",
+                    "Apply the named OCIO display and view (options: from=, looks=, key=, value=)",
                 "--unpremult %@", action_unpremult, NULL,
                     "Divide all color channels of the current image by the alpha to \"un-premultiply\"",
                 "--premult %@", action_premult, NULL,
@@ -3957,6 +4646,9 @@ getargs (int argc, char *argv[])
             s << " (* = default)";
             std::cout << Strutil::wordwrap(s.str(), columns, 4) << "\n";
         }
+
+        if (! ot.colorconfig.supportsOpenColorIO())
+            std::cout << "No OpenColorIO support was enabled at build time.\n";
 
         exit (EXIT_SUCCESS);
     }
@@ -4065,7 +4757,7 @@ handle_sequence (int argc, const char **argv)
                                             frame_numbers[a]);
             Filesystem::enumerate_file_sequence (normalized_pattern,
                                                  frame_numbers[a],
-                                                 views,
+                                                 frame_views[a],
                                                  filenames[a]);
         } else if (sequence_is_output[i]) {
             // use frame numbers from first sequence

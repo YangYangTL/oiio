@@ -140,6 +140,11 @@ public:
     OpenEXRInput ();
     virtual ~OpenEXRInput () { close(); }
     virtual const char * format_name (void) const { return "openexr"; }
+    virtual int supports (string_view feature) const {
+        return (feature == "arbitrary_metadata"
+             || feature == "exif"   // Because of arbitrary_metadata
+             || feature == "iptc"); // Because of arbitrary_metadata
+    }
     virtual bool valid_file (const std::string &filename) const;
     virtual bool open (const std::string &name, ImageSpec &newspec);
     virtual bool close ();
@@ -265,6 +270,7 @@ private:
         m_map["comments"] = "ImageDescription";
         m_map["owner"] = "Copyright";
         m_map["pixelAspectRatio"] = "PixelAspectRatio";
+        m_map["xDensity"] = "XResolution";
         m_map["expTime"] = "ExposureTime";
         // Ones we don't rename -- OpenEXR convention matches ours
         m_map["wrapmodes"] = "wrapmodes";
@@ -292,7 +298,6 @@ private:
         // screenWindowCenter
         // chromaticities whiteLuminance adoptedNeutral
         // renderingTransform, lookModTransform
-        // xDensity
         // utcOffset
         // longitude latitude altitude
         // focus isoSpeed
@@ -300,7 +305,7 @@ private:
     }
 };
 
-static StringMap exr_tag_to_ooio_std;
+static StringMap exr_tag_to_oiio_std;
 
 
 namespace pvt {
@@ -359,21 +364,27 @@ OpenEXRInput::open (const std::string &name, ImageSpec &newspec)
     
     try {
         m_input_stream = new OpenEXRInputStream (name.c_str());
-    }
-    catch (const std::exception &e) {
+    } catch (const std::exception &e) {
         m_input_stream = NULL;
         error ("OpenEXR exception: %s", e.what());
+        return false;
+    } catch (...) {   // catch-all for edge cases or compiler bugs
+        m_input_stream = NULL;
+        error ("OpenEXR exception: unknown");
         return false;
     }
 
 #ifdef USE_OPENEXR_VERSION2
     try {
         m_input_multipart = new Imf::MultiPartInputFile (*m_input_stream);
-    }
-    catch (const std::exception &e) {
+    } catch (const std::exception &e) {
         delete m_input_stream;
         m_input_stream = NULL;
         error ("OpenEXR exception: %s", e.what());
+        return false;
+    } catch (...) {   // catch-all for edge cases or compiler bugs
+        m_input_stream = NULL;
+        error ("OpenEXR exception: unknown");
         return false;
     }
 
@@ -386,11 +397,14 @@ OpenEXRInput::open (const std::string &name, ImageSpec &newspec)
         } else {
             m_input_scanline = new Imf::InputFile (*m_input_stream);
         }
-    }
-    catch (const std::exception &e) {
+    } catch (const std::exception &e) {
         delete m_input_stream;
         m_input_stream = NULL;
         error ("OpenEXR exception: %s", e.what());
+        return false;
+    } catch (...) {   // catch-all for edge cases or compiler bugs
+        m_input_stream = NULL;
+        error ("OpenEXR exception: unknown");
         return false;
     }
 
@@ -552,7 +566,7 @@ OpenEXRInput::PartInfo::parse_header (const Imf::Header *header)
         const Imf::StringVectorAttribute *svattr;
 #endif
         const char *name = hit.name();
-        std::string oname = exr_tag_to_ooio_std[name];
+        std::string oname = exr_tag_to_oiio_std[name];
         if (oname.empty())   // Empty string means skip this attrib
             continue;
 //        if (oname == name)
@@ -643,6 +657,14 @@ OpenEXRInput::PartInfo::parse_header (const Imf::Header *header)
             std::cerr << "  unknown attribute " << type << ' ' << name << "\n";
 #endif
         }
+    }
+
+    float aspect = spec.get_float_attribute ("PixelAspectRatio", 0.0f);
+    float xdensity = spec.get_float_attribute ("XResolution", 0.0f);
+    if (xdensity) {
+        // If XResolution is found, supply the YResolution and unit.
+        spec.attribute ("YResolution", xdensity * (aspect ? aspect : 1.0f));
+        spec.attribute ("ResolutionUnit", "in"); // EXR is always pixels/inch
     }
 
 #ifdef USE_OPENEXR_VERSION2
@@ -827,9 +849,16 @@ OpenEXRInput::seek_subimage (int subimage, int miplevel, ImageSpec &newspec)
                 else
                     m_scanline_input_part = new Imf::InputPart (*m_input_multipart, subimage);
             }
-        }
-        catch (const std::exception &e) {
+        } catch (const std::exception &e) {
             error ("OpenEXR exception: %s", e.what());
+            m_scanline_input_part = NULL;
+            m_tiled_input_part = NULL;
+            m_deep_scanline_input_part = NULL;
+            m_deep_tiled_input_part = NULL;
+            ASSERT(0);
+            return false;
+        } catch (...) {   // catch-all for edge cases or compiler bugs
+            error ("OpenEXR exception: unknown");
             m_scanline_input_part = NULL;
             m_tiled_input_part = NULL;
             m_deep_scanline_input_part = NULL;
@@ -982,9 +1011,11 @@ OpenEXRInput::read_native_scanlines (int ybegin, int yend, int z,
         } else {
             ASSERT (0);
         }
-    }
-    catch (const std::exception &e) {
+    } catch (const std::exception &e) {
         error ("Failed OpenEXR read: %s", e.what());
+        return false;
+    } catch (...) {   // catch-all for edge cases or compiler bugs
+        error ("Failed OpenEXR read: unknown exception");
         return false;
     }
     return true;
@@ -1094,9 +1125,11 @@ OpenEXRInput::read_native_tiles (int xbegin, int xend, int ybegin, int yend,
                         (char *)data+(y-ybegin)*scanline_stride,
                         user_scanline_bytes);
         }
-    }
-    catch (const std::exception &e) {
+    } catch (const std::exception &e) {
         error ("Failed OpenEXR read: %s", e.what());
+        return false;
+    } catch (...) {   // catch-all for edge cases or compiler bugs
+        error ("Failed OpenEXR read: unknown exception");
         return false;
     }
 
@@ -1154,9 +1187,11 @@ OpenEXRInput::read_native_deep_scanlines (int ybegin, int yend, int z,
 
         // Read the pixels
         m_deep_scanline_input_part->readPixels (ybegin, yend-1);
-    }
-    catch (const std::exception &e) {
+    } catch (const std::exception &e) {
         error ("Failed OpenEXR read: %s", e.what());
+        return false;
+    } catch (...) {   // catch-all for edge cases or compiler bugs
+        error ("Failed OpenEXR read: unknown exception");
         return false;
     }
 
@@ -1217,17 +1252,26 @@ OpenEXRInput::read_native_deep_tiles (int xbegin, int xend,
         int xtiles = round_to_multiple (xend-xbegin, m_spec.tile_width) / m_spec.tile_width;
         int ytiles = round_to_multiple (yend-ybegin, m_spec.tile_height) / m_spec.tile_height;
 
+        int firstxtile = (xbegin - m_spec.x) / m_spec.tile_width;
+        int firstytile = (ybegin - m_spec.y) / m_spec.tile_height;
+
         // Get the sample counts for each pixel and compute the total
         // number of samples and resize the data area appropriately.
-        m_deep_tiled_input_part->readPixelSampleCounts (0, xtiles-1, 0, ytiles-1);
+        m_deep_tiled_input_part->readPixelSampleCounts (
+                firstxtile, firstxtile+xtiles-1,
+                firstytile, firstytile+ytiles-1);
         deepdata.alloc ();
 
         // Read the pixels
-        m_deep_tiled_input_part->readTiles (0, xtiles-1, 0, ytiles-1,
-                                            m_miplevel, m_miplevel);
-    }
-    catch (const std::exception &e) {
+        m_deep_tiled_input_part->readTiles (
+                firstxtile, firstxtile+xtiles-1,
+                firstytile, firstytile+ytiles-1,
+                m_miplevel, m_miplevel);
+    } catch (const std::exception &e) {
         error ("Failed OpenEXR read: %s", e.what());
+        return false;
+    } catch (...) {   // catch-all for edge cases or compiler bugs
+        error ("Failed OpenEXR read: unknown exception");
         return false;
     }
 

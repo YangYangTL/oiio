@@ -1,45 +1,275 @@
 Changes:
 
-Release 1.5 (development in progress) -- compared to 1.4.x
+Release 1.6 (in progress) -- compared to 1.5.x
+----------------------------------------------
+Major new features and improvements:
+ * New oiiotool functionality:
+    * Expression evaluation/substitution on the oiiotool command line.
+      Anything enclosed in braces { } in a command line argument will be
+      substituted by the evaluation of the enclosed expression. Expressions
+      may be numbers, simple arithmetic (like 'expr+expr'), or retrieving
+      image metadata from named images or images on the stack.
+      Please see the PDF documentation, Section 12.1 for details and
+      examples.
+    * --absdiff, --absdiffc compute the absolute difference (abs(A-B)) of
+      two images, or between an image and a constant color. #1029 (1.6.0)
+    * --abs computes the absolute value of an image.  #1029 (1.6.0)
+    * --div, divc divide one image by another (pixel by pixel), or divides
+      the pixels of an image by a constant color. #1029 (1.6.0)
+    * --addc, --subc, --mulc, --powc are the new names for --cadd, --csub,
+      --cmul, and --cpow. The old ones will continue to work but are
+      considered depcrected. #1030 (1.6.0)
+    * --pattern supports new patterns: "fill" makes a solid, vertical or
+       horizontal gradient, or four-corner interpolated image (just like
+       the --fill commmand) (1.6.0); "noise" can generate uniform, gaussian,
+       or salt & pepper noise (1.6.2).
+    * --fill, in addition to taking optional parameter color=... to give a
+      solid color for the fill region, now also takes top=...:bottom=... to
+      make a vertical gradient, left=...:right=... to make a horizontal
+      gradient, and topleft=...:topright=...:bottomleft=...:bottomright=...
+      to make a 4-corner gradient. (1.6.0)
+    * --noise adds noise to the current image: additive uniform or gaussian
+      noise, or making "salt & pepper" noise. (1.6.2)
+ * New ImageBufAlgo functions:
+    * absdiff() computes the absolute difference (abs(A-B)) of two images,
+      or between an image and a constant color. #1029 (1.6.0)
+    * abs() computes the absolute value of an image. #1029 (1.6.0)
+    * div() divides one image by another (pixel by pixel), or divides all
+      the pixels of an image by a constant color. #1029 (1.6.0)
+    * fill() has been extended with new varieties that take 2 colors (making
+      a vertical gradient) and 4 colors (one for each ROI corner, for a
+      bilinearly interpolated gradient). (1.6.0)
+    * noise() injects noise into an image -- uniform, gaussian/normal,
+      or salt & pepper noise. (1.6.2)
+
+Public API changes:
+ * Clarified in the docs that TextureSystem::get_texture_info and
+   ImageCache::get_image_info "exists" queries should return true, and
+   place in *data the value 1 or 0 depending on whether the image exists
+   and can be read. (1.6.0/1.5.10)
+ * Removed deprecated header "string_ref.h" (use string_view.h). (1.6.1)
+ * ImageCache: Added get_perthread_info() and get_image_handle() to return
+   opaque perthread and file handle pointers, much like TextureSystem
+   already had, and added handle-based versions of get_image_info(),
+   get_imagespec(), imagespec(), get_pixels(), and get_tile(), in addition
+   to the existing name-based versions of those methods. #1057 (1.6.1)
+ * TextureSystem: added handle-based versions of get_texture_info(),
+   get_imagespec(), imagespec(), and get_texels(), in addition to the
+   existing name-based versions of those methods. Note that texture(),
+   environment(), and texture3d() already had both named-based and
+   handle-based varieties. #1057 (1.6.1) #1083 (1.6.2)
+ * Clarified in the docs that TextureSystem::get_texture_info and
+   ImageCache::get_image_info "exists" queries should return true, and
+   place in *data the value 1 or 0 depending on whether the image exists
+   and can be read. #1046 (1.6.0/1.5.10)
+ * IC/TS: add create_thread_info() and destroy_thread_info() methods that
+   allow an app to manage the per-thread records needed by the IC.
+   #1080 (1.6.2)
+ * Removed deprecated header string_ref.h. (Should use string_view.h)
+   #1047 (1.6.0)
+ * New ImageOutput::supports() tags: supports("alpha") should be true for
+   image formats that support an alpha channel, supports("nchannels") should
+   be true for output formats that support an arbitrary number of output
+   channels. (1.6.2/1.5.13)
+ * ImageSpec::metadata_val() is now static, rather than simply const,
+   since it doesn't need access to *this at all. #1063 (1.6.1)
+ * Added a new variety of ImageSpec::find_attribute that takes a temporary
+   ImageIOParameter as scratch space. The advantage of this call is that it
+   can retrieve items from the named ImageSpec fields, such as "width",
+   "full_x", etc. Also, the get_int_attribute, get_float_attribute, and
+   get_string_attribute can now retrieve these fixed fields as well.
+   #1063 (1.6.1)
+ * Python bindings:
+    * Added previously-M.I.A. ImageSpec::erase_attribute(). #1063 (1.6.1)
+ * ImageInput and ImageOutput supports() method has been changed to accept
+   a string_view (rather than a const std::string&), and return an int
+   (rather than a bool). (1.6.2)
+ * Add ImageBuf::make_writeable(), which forces IC-backed read-only
+   ImageBuf to read into locally allocated pixels so they can be
+   subsequently altered. #1087 (1.6.2)
+
+Fixes, minor enhancements, and performance improvements:
+ * oiiotool
+    * Bug fix for frame sequences -- could crash in Windows. #1060 (1.6.1)
+    * Gracefully handle requests to save an image with more channels than
+      the output file format can handle. Instead of being a fatal error,
+      now it's just a warning, and extra channels are dropped. It tries to
+      to find R, G, B, and A channels, saving them. If those names are
+      not found, it just saves the first 3 (or 4) channels. #1058 (1.6.1)
+    * Improve error messages when files can't be read. It is now easier
+      to to distinguish files that don't exist from those that are an
+      unknown format from those that are corrupted or have read
+      errors. #1065 (1.6.1)
+    * Flag errors properly when -d specifies an unknown data format name.
+      #1077 (1.6.2/1.5.13)
+    * oiiotool numeric wildcard improvement: allow more digits to match.
+      #1082 (1.6.2/1.5.13)
+ * maketx & TextureSystem:
+    * Fix broken bicubic texture sampling with non-power-of-two sized
+      tiles. #1035 (1.6.0/1.5.10)
+    * maketx: when the source image was a crop (data window != display
+      window), and the sharpening filters were used, it would
+      incorrectly issue an "unknown filter name" error. #1059 (1.6.1/1.5.12)
+    * maketx: Flag errors properly when -d specifies an unknown data
+      format name. #1077 (1.5.13)
+    * maketx now writes to a temporary file, then moving it to the final
+      requested output filename only when the write completed without
+      error.  This prevents situations where maketx crashes or is killed
+      and leaves behind a file that looks correct but is actually
+      corrupted or truncated. #1072 (1.6.2/1.5.13)
+ * OpenEXR:
+    * Improved handling of density and aspect ratio. #1042 (1.6.0)
+    * Fix read_deep_tiles() error when not starting at the image origin.
+      #1040 (1.6.0/1.5.10)
+    * Fix output of multi-part exr file when some parts are tiled and
+      others aren't. #1040 (1.6.0/1.5.10)
+    * write_tile() with AutoStride calculated the wrong default strides
+      for "edge" tiles when the image width or length was not an integer
+      multiple of the tile size. Also clarified the PDF and imageio.h
+      docs in how they explain strides for this case. #1055 (1.6.1/1.5.12)
+ * JPEG:
+    * Now properly read/write xdensity and ydensity (what OIIO and TIFF
+      call "XResolution" and "YResolution" and, therefore,
+      "PixelAspectRatio". #1042 #1066 (1.6.0, 1.6.1)
+    * Support JPEG files encoded as CMYK (by converting to RGB upon read)
+      #1044 (1.6.1)
+ * TIFF:
+    * Improved handling of density and aspect ratio. #1042 (1.6.0)
+    * Improved proper handling of the interplay between "XResolution",
+      "YResolution", and "PixelAspectRatio". #1042 (1.6.0)
+
+Build/test system improvements:
+ * Python plugin is now build as a cmake "module" rather than "library",
+   which fixes some things on OSX. #1043 (1.6.0/1.5.10)
+ * Various build fixes for Windows. #1052 #1054 (1.6.1)
+ * New CMake build-time option to specify the default plugin search path.
+   #1056 (1.6.1/1.5.12)
+ * Fix build breaks for very old versions of Ilmbase (1.6 and earlier)
+   that lack a definition of V4f used by our simd.h. #1048 (1.6.1/1.5.11)
+ * Fix signed/unsigned warning on 32 bit platforms in jpeginput.cpp.
+   #1049 (1.6.1/1.5.11)
+ * New CMake build-time option to specify the default plugin search path.
+   #1056 (1.6.1/1.5.12)
+ * Fix gcc 5.0 compiler warning in PtexHalf.cpp. (1.6.1/1.5.12)
+ * Remove dependency of OpenSSL by default. #1086 (1.6.2/1.5.13)
+
+Developer goodies / internals:
+ * Strutil additions: parse_until, parse_nested (1.6.1)
+ * Made TypeDesc::equivalent accept comparisons of arrays of unspecified
+   length with ones of definite length. #1072  (1.6.2/1.5.13)
+ * Add Filesystem::rename() utility. #1070  (1.6.2/1.5.13)
+ * New SIMD methods: insert<>, xyz0, vreduce_add, dot, dot3, vdot, vdot3,
+   AxBxCxDx, blend0not (1.6.2)
+ * array_view enhancements that let you initialize an array_view<const float>
+   from a const std::vector<float>&.  #1084 (1.6.2/1.5.14)
+ * hash.h contains several new hashes in namespaces 'OIIO::xxhash' and
+   'OIIO::farmhash'. Also, Strutil::strhash now uses farmhash rather than
+   the Jenkins one-at-a-time hash, bringing big speed improvements
+   (including ustring creation). Beware that the strhash value returned
+   will be different than they were before. #1090 (1.6.3)
+
+
+
+Release 1.5.13 (10 Mar 2015) -- compared to 1.5.12)
+----------------------------------------------
+ * oiiotool: Bug fix for frame sequences -- could crash in Windows. #1060
+ * New ImageOutput::supports() tags: supports("alpha") should be true for
+   image formats that support an alpha channel, supports("nchannels") should
+   be true for output formats that support an arbitrary number of output
+   channels. #1058
+ * oiiotool: Gracefully handle requests to save an image with more channels
+   than the output file format can handle. Instead of being a fatal error,
+   now it's just a warning, and extra channels are dropped. It tries to
+   to find R, G, B, and A channels, saving them. If those names are
+   not found, it just saves the first 3 (or 4) channels. #1058
+ * Improved handling of "PixelAspectRatio" for JPEG, TIFF, and OpenEXR.
+   #1042 #1066
+ * oiiotool: Improve error messages when files can't be read. It is now
+   easier to to distinguish files that don't exist from those that
+   are an unknown format from those that are corrupted or have read
+   errors. #1065
+ * maketx now writes to a temporary file, then moving it to the final
+   requested output filename only when the write completed without error.
+   This prevents situations where maketx crashes or is killed and leaves
+   behind a file that looks correct but is actually corrupted or
+   truncated. #1072
+ * Python: added previously-M.I.A. ImageSpec.erase_attribute(). #1063
+ * Add Filesystem::rename() utility. #1070
+ * Made TypeDesc::equivalent accept comparisons of arrays of unspecified
+   length with ones of definite length. #1072
+ * oiiotool & maketx have improved error message when unknown data format
+   names are requested with "-d". #1077
+ * oiiotool numeric wildcard improvement: allow more digits to match. #1082
+ * Remove dependency of OpenSSL by default. #1086
+
+Release 1.5.12 (11 Feb 2015) -- compared to 1.5.11)
+----------------------------------------------
+* Various build fixes for Windows. #1052 #1054
+* New CMake build-time option to specify the default plugin search path.
+  #1056 (1.5.12)
+* OpenEXR: fixed write_tile() with AutoStride calculated the wrong
+  default strides for "edge" tiles when the image width or length was
+  not an integer multiple of the tile size. Also clarified the PDF and
+  imageio.h docs in how they explain strides for this case. #1055 (1.5.12)
+* maketx: when the source image was a crop (data window != display window),
+  and the sharpening filters were used, it would incorrectly issue an
+  "unknown filter name" error. #1059 (1.5.12)
+* Fix gcc 5.0 compiler warning in PtexHalf.cpp. (1.5.12)
+
+Release 1.5.11 (28 Jan 2015) -- compared to 1.5.10)
+----------------------------------------------
+* Fix build breaks for very old versions of Ilmbase (1.6 and earlier)
+  that lack a definition of V4f used by our simd.h. #1048
+* Fix signed/unsigned warning on 32 bit platforms in jpeginput.cpp. #1049
+
+
+Release 1.5 (26 Jan 2015) -- compared to 1.4.x
 ----------------------------------------------
 Major new features and improvements:
 * New oiiotool functionality/commands:
    * --rotate90, --rotate180, --rotate270 rotate the image in 90 degree
-     axially-aligned increments. (1.5.2)
+     axially-aligned increments with no filtering. (1.5.2)
    * --reorient will perform whatever series of rotations or flips are
-     necessary to move the pixels to match the Orientation metadata that
+     necessary to move the pixels to match the "Orientation" metadata that
      describes the desired display orientation. (1.5.2)
    * --autoorient will automatically do the equivalent of --reorient on
      every image as it is read in, if it has a nonstandard orientation.
      (This is generally a good idea to use if you are using oiiotool to
      combine images that may have different orientations.) (1.5.2)
-   * --rotate rotates an image by arbitrary angle and center point.
-     #932 (1.5.3)
-   * --warp transforms an image using a 3x3 matrix. #932 (1.5.3)
+   * --rotate rotates an image by arbitrary angle and center point,
+     with high-quality filtering. #932 (1.5.3)
+   * --warp transforms an image using a 3x3 matrix, with high-quality
+     filtering. #932 (1.5.3)
    * --median performs a median filter. (1.5.4)
 * New ImageBufAlgo functions:
    * rotate90(), rotate180(), rotate270() rotate the image in 90 degree
-     axially-aligned increments. (1.5.2)
+     axially-aligned increments with no filtering. (1.5.2)
    * reorient() will perform whatever series of rotations or flips are
-     necessary to move the pixels to match the Orientation metadata that
+     necessary to move the pixels to match the "Orientation" metadata that
      describes the desired display orientation. (1.5.2)
-   * rotate() performs rotation with arbitrary angle and center point.
-     #932 (1.5.3)
-   * warp() transforms an image by a 3x3 matrix. #932 (1.5.3)
+   * rotate() performs rotation with arbitrary angle and center point,
+     with high-quality filtering. #932 (1.5.3)
+   * warp() transforms an image by a 3x3 matrix, with high-quality
+     filtering. #932 (1.5.3)
    * median_filter performs a median filter. (1.5.4)
 * Significant internal speedups by utilizing SIMD instructions (SSE) in
-  the TextureSystem (1.5.5 / #948). To use this to its fullest extent,
-  build OIIO with the make/cmake option USE_SIMD=arch, where arch is
-  sse2, sse3, sse4.1, sse4.2, depending on what machines you'll be
-  deploying to. (Note that x86_64 automatically implies at least sse2.)
-  (1.5.5)
-* Support for many movie files via a plugin using 'ffmpeg'. Should work
+  the TextureSystem (1.5.5 / #948, 1.5.6 / #990). To use this to its
+  fullest extent, build OIIO with the make/cmake option USE_SIMD=arch,
+  where arch is sse2, ssse3, sse4.1, sse4.2, depending on what machines
+  you'll be deploying to. (Note that x86_64 automatically implies at
+  least sse2.) We're finding that this has approximately doubled the
+  speed of the math part of texture mapping (it doesn't speed up the disk
+  I/O, of course).  (1.5.5)
+* Basic support for many movie files via a plugin using 'ffmpeg'. Works
   with avi, mov, qt, mp4, m4a, 3gp, 3g2, mj2, m4v, mpg, and more.  Movie
   files simply look like multi-image files to OIIO. There isn't really
   support for audio yet, and although this lets you retrieve and process
   individual frames of a movie file, OIIO is still not meant to be a
   video-processing library. Currently, these formats can be read, but
-  there is no write support (maybe coming soon). #928 (1.5.5)
+  there is no write support (maybe coming soon). #928 #1010 (1.5.5)
+* Nuke plugins -- a txReader plugins that will read OIIO texture files,
+  and a txWriter that will output proper (tiled & mip-mapped) texture files
+  from Nuke. Contributed by Nathan Rusch / Luma Pictures. #973 (1.5.6)
 
 Public API changes:
 * TextureSystem API calls have been modified: the nchannels, dresultds,
@@ -58,6 +288,38 @@ Public API changes:
   ImageBuf::get_pixels. This is exposed now. #931 (1.5.3)
 * The Filter API now uses string_view. (1.5.3)
 * ImageBuf and ImageBufAlgo now use string_view extensively. (1.5.4)
+* ImageInput::supports() and ImageOutput::supports() now accept new tags:
+  "arbitrary_metadata" reveals if the format allows arbitrarily-named
+  metadata; "exif" if the format can store camera Exif data; "iptc" if
+  the format can store IPTC metadata. #1001 (1.5.7)
+* Removed ImageBuf and ImageBufAlgo functions that have been deprecated
+  since OIIO 1.3. #1016 (1.5.8)
+* ImageCache::add_file has been extended to allow an ImageSpec pointer
+  as "configuration", which will be passed along to the underlying
+  ImageInput::open() when the file is first opened. This allows you to
+  use the same kind of configuration options/hints that you would with a
+  raw ImageInput. (1.5.8)
+* ImageBuf constructor and reset methods have been extended to allow an
+  ImageSpec pointer as "configuration", which will be passed along to
+  the underlying ImageCache and/or ImageInput::open() when the file is
+  first opened. This allows you to use the same kind of configuration
+  options/hints that you would with a raw ImageInput. (1.5.8)
+* The DeepData helper structure now has methods to set (already allocated)
+  deep values, as well as to retrieve uint values. (1.5.8)
+* ImageBuf methods to get and set deep values and to allocate the DeepData
+  structure. (1.5.8)
+* ImageBuf::interppixel_NDC has been changed to consider the coordinates
+  relate to full (aka display) window, rather than data window. (1.5.8)
+* ImageBuf::interppixel_bicubic and interppixel_bicubic_NDC added to
+  sample an image with B-spline bicubic interpolation. (1.5.8)
+* Clarified in the docs that TextureSystem::get_texture_info and
+  ImageCache::get_image_info "exists" queries should return true, and
+  place in *data the value 1 or 0 depending on whether the image exists
+  and can be read. (1.5.10)
+* Clarified in the docs that TextureSystem::get_texture_info and
+  ImageCache::get_image_info "exists" queries should return true, and
+  place in *data the value 1 or 0 depending on whether the image exists
+  and can be read. (1.5.10)
 
 Fixes, minor enhancements, and performance improvements:
 * ImageBufAlgo:
@@ -65,6 +327,7 @@ Fixes, minor enhancements, and performance improvements:
      sensibly for cropped images. In particular, the transformation now
      happens with respect to the display (full) window, rather than
      simply flipping or flopping within the data window. (1.5.2)
+   * channels() now works properly with "deep" images. (1.5.8)
 * oiiotool:
    * oiiotool --nosoftwareattrib suppresses the altering of Software and
      ImageHistory fields upon output. (1.5.1)
@@ -100,14 +363,66 @@ Fixes, minor enhancements, and performance improvements:
      for the blurring step (rather than a gaussian or other convolution
      filter), which tends to sharpen small details but not over-sharpen
      long edges as the traditional unsharp mask often does. (1.5.4)
-* maketx:
-   * Fix case typo for LatLong env map creation when in 'prman' mode. #877.
-     (1.5.1/1.4.10)
+   * oiiotool's help message now says explicitly if it was compiled without
+     any support for OpenColorIO. (1.5.5/1.4.15)
+   * oiiotool -stats, on deep files, now prints a histogram of the number
+     of samples per pixel. #992 (1.5.6)
+   * oiiotool --dump of "deep" files improves output with int32 channels
+     (1.5.6).
+   * oiiotool --stats of "deep" files prints a histogram of samples/pixel
+     (1.5.6).
+   * oiiotool -subimage has better error detection and reporting for
+     requests for nonexistant subimages. #1005 (1.5.7)
+   * oiiotool --ch is a bit more flexible in its channel-shuffling syntax:
+     you are now able to say newchannel=oldchannel, both shuffling and
+     renaming channels simultaneously, thus removing a frequent necessity
+     of a --chnames action following a --ch. (1.5.8)
+   * oiiotool -d now supports uint32, sint32. #1013 (1.5.8)
+   * oiiotool -native forces native data format read in cases where going
+     through the ImageCache would have sacrificed precision or range.
+     #1014 (1.5.8)
+   * oiiotool --resize (and similar, such as --fix, --resample, etc.) size
+     specifiers now allow percentage values that are not the same in each
+     direction, such as "200%x50%", which would double horizontal resolution
+     while cutting vertical resolution in half. #1017 (1.5.8)
+   * oiiotool --ch now works properly with "deep" images. (1.5.8)
+* maketx & TextureSystem:
+   * texture lookups have roughly doubled in performance because of SSE
+     optimization. (1.5.5 / #948, 1.5.6 / #990).
+   * maketx: Fix case typo for LatLong env map creation when in 'prman'
+     mode. #877.  (1.5.1/1.4.10)
    * maketx --attrib, --sattrib, and --sansattrib now work like
      oiiotool; in other words, you can use command line arguments to add
      or alter metadata in the process of creating a texture. #901 (1.5.1)
-   * Experimental feature: maketx --sharpen <AMT> adds slight sharpening
-     and emphasis of higher frequencies when creating MIP-maps. #958 (1.5.5)
+   * maketx --sharpen <AMT> adds slight sharpening and emphasis of
+     higher frequencies when creating MIP-maps. #958 (1.5.5)
+   * Fix crash when using maketx --checknan (1.5.5)
+   * maketx now embeds metadata hints ("oiio:ConstantColor") for
+     constant textures (all pixels are identical). The texture system
+     notices this hint and will automatically replace texture lookups
+     (as long as wrap mode is not black) with this constant value, about
+     10x faster than a real texture lookup would have been. This sounds
+     silly, but in production sometimes you end up with uniform textures
+     and this helps. Also, you can retrieve the constant color via
+     get_texture_info of "constantcolor" and "constantalpha" (though the
+     retrieval will only succeed if the metadata is present, even if
+     the texture is actually constant). #1006 (1.5.7)
+   * maketx now embeds metadata hints ("oiio:AverageColor") containing
+     the average value of the texture. This can be retrieved with
+     get_texture_info of "averagecolor" and "averagealpha". #1006 (1.5.7)
+* Python:
+    * Bug fix: the Python binding of ImageInput.read_scanlines did not
+      properly honor any channel subset specified. (1.5.5/1.4.15)
+    * All of the expensive functions in the Python bindings now release the
+      Python GIL (global interpreter lock) as much as possible. This allows
+      other Python threads to make progress even when OIIO is doing a
+      lengthy operation such as file I/O or an expensive image processing
+      operation. (1.5.5)
+    * Bug fix in ImageInput: could crash if calling ImageInput.read_*
+      functions without specifying a data format. #998 (1.5.6)
+    * Bug fix in ImageOutput: could crash if calling ImageInput.write_*
+      functions if the buffer format did not match the file data format.
+      #999 (1.5.6)
 * OpenEXR:
    * Improve the quality of lossy b44 compression by more correctly
      using the pLinear value of channels (we were incorrectly using the
@@ -124,11 +439,19 @@ Fixes, minor enhancements, and performance improvements:
      matrix. #929 (1.5.3/1.4.13)
    * OpenEXR 2.2 support, including the new DWAA/DWAB compression modes.
      (1.5.4)
+   * Fix bug that prevented proper saving/reporting of subimage name
+     for multi-subimage OpenEXR files. (1.5.5).
+   * Fix read_deep_tiles() error when not starting at the image origin.
+     #1040 (1.6.0/1.5.10)
+   * Fix output of multi-part exr file when some parts are tiled and
+     others aren't. #1040 (1.6.0/1.5.10)
 * JPEG:
    * Fix broken recognition of .jfi extension. (#876)
    * Read and write ICC profiles as attribute "ICCProfile". (#911)
    * Fix seek_subimage for JPEG input -- did not properly return the
-    spec. (1.5.2/1.4.12)
+     spec. (1.5.2/1.4.12)
+   * Support for reporting and controlling chroma-subsampling value,
+     via the "jpeg:subsampling" attribute. #978 (1.5.5)
 * PNG:
    * Read and write ICC profiles as attribute "ICCProfile". (#911)
 * TIFF:
@@ -137,8 +460,14 @@ Fixes, minor enhancements, and performance improvements:
      origin. (1.5.3)
    * Improved precision when auto-premultiplying 8 bit unassociated alpha
      images (if the user is reading them into a higher-precision buffer).
-     #960, #962 (1.6.2)
-* RAW: Fix for portrait-orientation image reads. (#878) (1.5.1/1.4.10)
+     #960, #962 (1.5.2)
+   * Change default compression (if otherwise unspecified) to "zip". (1.5.6)
+   * Robust to Exif blocks with corrupted GPS data. #1008 (1.5.8/1.4.16)
+   * Fixes to allow proper output of TIFF files with uint32 or int32 pixels
+     (1.5.8)
+* RAW:
+   * Fix for portrait-orientation image reads. (#878) (1.5.1/1.4.10)
+   * Fix bug with "open with config" options. #996 (1.5.6)
 * RLA: Fix bug that caused RLA output to not respect requests for 10 bit
   output (would force it to 16 in that case). #899 (1.5.1)
 * ImageSpec::get_float_attribute() is now better about retrieving values
@@ -157,6 +486,8 @@ Fixes, minor enhancements, and performance improvements:
   (1.5.2)
 * TextureSystem: anisotropic texture lookups are slightly sped up (~7%)
   by using some approximate math (but not visibly different) #953. (1.5.5)
+* Better exception safety in Filesystem::exists() and similar functions.
+  #1026 (1.5.8/1.4.16)
 
 Build/test system improvements:
 * Fix several compiler warnings and build breakages for a variety of
@@ -198,6 +529,17 @@ Build/test system improvements:
 * testtex new options: --nchannels (forces num channels to look up, rather
   than always doing what's in the file), --derivs (force the kind of texture
   calls that return derivs of the texture lookups. (1.5.4)
+* Make it able to compile against giflib >= 5.1. #975 (1.4.14/1.5.5)
+* Add an option to link against static Ilmbase and OpenEXR libraries (1.5.5).
+* Add testtex options -interpmode and -mipmode. #988 (1.5.6)
+* Build against Python 3 if the make/cmake build flag USE_PYTHON3=1 is used.
+  (1.5.6)
+* grid.tx and checker.tx have been moved from ../oiio/images to
+  testsuite/common/texture (allow it to be versioned along with any changes
+  to maketx. (1.5.7)
+* Support for freetype 2.5.4. #1012 (1.5.8/1.4.16)
+* Python plugin is now build as a cmake "module" rather than "library",
+  which fixes some things on OSX. #1043 (1.6.0/1.5.10)
 
 Developer goodies / internals:
 * New Strutil string comparison functions: starts_with, ends_with.
@@ -211,7 +553,7 @@ Developer goodies / internals:
 * Improved error propagation through ImageCache, ImageBuf, and oiiotool.
   (1.5.1)
 * Moved certain platform-dependent macros from sysutil.h to platform.h
-  (1.5.4)
+  (1.5.4/1.4.16)
 * ustring: add comparisons between ustrings versus char* and string_view.
   (1.5.4)
 * New simd.h exposes float4, int4, and mask4 classes that utilize SSE
@@ -223,9 +565,59 @@ Developer goodies / internals:
   versions. #953, #956 (1.5.5)
 * New utility function: premult(), which can premultiply non-alpha, non-z
   channels by alpha, for a whole buffer (with strides, any data type).
-  #962 (1.6.2)
+  #962 (1.5.5)
+* Timer API now has queries for ticks as well as seconds. (1.5.5)
+* platform.h now has macros to mark functions as pure, const, nothrow,
+  or unused. (1.5.5)
+* Filesystem::read_text_file reads a whole text file into a string
+  efficiently. (1.5.8)
 
 
+
+Release 1.4.16 (19 Jan 2015 -- compared to 1.4.15)
+--------------------------------------------------
+* Fix gcc 4.9 warnings.
+* Improved error propagation through ImageCache, ImageBuf, and oiiotool.
+* TIFF more robust to Exif blocks with corrupted GPS data. #1008
+* Support for freetype 2.5.4. #1012
+* Better exception safety in Filesystem::exists() and similar functions. #1026
+
+Release 1.4.15 (24 Nov 2014 -- compared to 1.4.14)
+--------------------------------------------------
+* OpenEXR: fix botched writing of subimage name.
+* 'oiiotool --help' now says explicitly if it was built without OpenColorIO
+  enabled.
+* Python read_scanlines() did not honor the channel subset.
+* RAW file reading: the open-with-config variety had the wrong function
+  signature, and therefore did not properly override the base class, causing
+  configuration hints to be ignored.
+* Bug fix in Python ImageInput: could crash if calling ImageInput.read_*
+  functions without specifying a data format. #998
+* Bug fix in Python ImageOutput: could crash if calling ImageInput.write_*
+  functions if the buffer format did not match the file data format. #999
+* RAW: Fix bug with "open with config" options. #996
+
+Release 1.4.14 (20 Oct 2014 -- compared to 1.4.13)
+--------------------------------------------------
+* GIF: Fix to make it able to compile against giflib >= 5.1. #975
+* JPEG support for reporting and controlling chroma-subsampling value,
+  via the "jpeg:subsampling" attribute. #978
+
+Release 1.4.13 (12 Sep 2014 -- compared to 1.4.12)
+--------------------------------------------------
+* Now builds against OpenEXR 2.2, including support for the new
+  DWAA and DWAB compression modes.
+* OpenEXR: fixed issue where a stringvec of 16 items was mishandled as
+  a matrix.
+* Fix fmath.h to move the 'using' statements around properly.
+* Fix oiiotool color conversion bug that crashed when the input image was
+  a file with MIP levels.
+* TIFF output now gracefully handles negative origins without hitting an
+  assertion.
+* Developer details: platform macros moved from sysutil.h to platform.h.
+  (But sysutil.h now includes platform.h, so you shouldn't notice.)
+* Developer details: ustring now has comparisons between ustrings versus
+  char* and string_view.
 
 Release 1.4.12 (31 Jul 2014 -- compared to 1.4.11)
 --------------------------------------------------
@@ -237,7 +629,6 @@ Release 1.4.12 (31 Jul 2014 -- compared to 1.4.11)
 * Fix for Linux + Boost >= 1.55 combination: need to link with -lrt.
   #914 (1.4.12/1.5.2)
 * Fix Ptex + static linkage. (1.4.12/1.5.2)
-
 
 Release 1.4.11 (9 Jul 2014 -- compared to 1.4.10)
 -------------------------------------------------
@@ -373,6 +764,8 @@ Fixes, minor enhancements, and performance improvements:
     images. (1.3.12/1.4.2)
   * --pdiff does a perceptual diff (like 'idiff -p'). (#815) (1.4.4)
   * --dumpdata takes a noptional modifier empty=0 that will cause empty
+    deep pixels to not produce any output. (#821) (1.4.5)
+  * --dumpdata correctly prints values of uint32 channels. #989 (1.5.6)
     deep pixels to not produce any output. (#821) (1.4.5)
   * --polar, --unpolar convert from complex (real,imag) to polar
     (amplitude, phase) and vice versa. (#831) (1.4.5)
