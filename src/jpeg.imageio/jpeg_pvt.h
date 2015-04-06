@@ -40,7 +40,9 @@
 #include <csetjmp>
 
 extern "C" {
+#define XMD_H
 #include "jpeglib.h"
+#undef XMD_H
 }
 
 

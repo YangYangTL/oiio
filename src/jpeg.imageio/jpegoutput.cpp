@@ -35,7 +35,10 @@
 #include <vector>
 
 extern "C" {
+#define XMD_H
 #include "jpeglib.h"
+#undef XMD_H
+
 }
 
 #include "OpenImageIO/imageio.h"
