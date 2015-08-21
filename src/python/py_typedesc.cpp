@@ -56,6 +56,10 @@ static void TypeDesc_set_vecsemantics (TypeDesc &t, TypeDesc::VECSEMANTICS val) 
     t.vecsemantics = val;
 }
 
+static void TypeDesc_fromstring (TypeDesc &t, const char* typestring)
+{
+    t.fromstring (typestring);
+}
 
 
 
@@ -141,7 +145,7 @@ void declare_typedesc() {
         .def("elementtype",      &TypeDesc::elementtype)
         .def("elementsize",      &TypeDesc::elementsize)
         .def("basesize",         &TypeDesc::basesize)
-        .def("fromstring",       &TypeDesc::fromstring)
+        .def("fromstring",       &TypeDesc_fromstring)
         .def("equivalent",       &TypeDesc::equivalent)
         .def("unarray",          &TypeDesc::unarray)
         .def("is_vec3",          &TypeDesc::is_vec3)
@@ -159,6 +163,7 @@ void declare_typedesc() {
         .def_readonly("TypeColor",    &TypeDesc::TypeColor)
         .def_readonly("TypeString",   &TypeDesc::TypeString)
         .def_readonly("TypeInt",      &TypeDesc::TypeInt)
+        .def_readonly("TypeHalf",     &TypeDesc::TypeHalf)
         .def_readonly("TypePoint",    &TypeDesc::TypePoint)
         .def_readonly("TypeVector",   &TypeDesc::TypeVector)
         .def_readonly("TypeNormal",   &TypeDesc::TypeNormal)

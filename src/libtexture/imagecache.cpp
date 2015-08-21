@@ -59,8 +59,7 @@
 #include <boost/scoped_array.hpp>
 
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
     using namespace pvt;
 
 namespace pvt {
@@ -295,14 +294,14 @@ ImageCacheFile::SubimageInfo::init (const ImageSpec &spec, bool forcefloat)
     if (! forcefloat) {
         // If we aren't forcing everything to be float internally, then 
         // there are a few other types we allow.
-        // But at present, it's only UINT8 and FLOAT.
         if (spec.format == TypeDesc::UINT8
+            || spec.format == TypeDesc::UINT16
+            || spec.format == TypeDesc::HALF
             /* future expansion:  || spec.format == AnotherFormat ... */)
             datatype = spec.format;
     }
     channelsize = datatype.size();
     pixelsize = channelsize * spec.nchannels;
-    eightbit = (datatype == TypeDesc::UINT8);
 
     // See if there's a constant color tag
     string_view software = spec.get_string_attribute ("Software");
@@ -2175,6 +2174,14 @@ ImageCacheImpl::check_max_mem (ImageCachePerThreadInfo *thread_info)
 std::string
 ImageCacheImpl::resolve_filename (const std::string &filename) const
 {
+    // Ask if the format can generate imagery procedurally. If so, don't
+    // go looking for a file.
+    ImageInput *input = ImageInput::create (filename);
+    bool procedural = input ? input->supports ("procedural") : false;
+    ImageInput::destroy (input);
+    if (procedural)
+        return filename;
+
     std::string s = Filesystem::searchpath_find (filename, m_searchdirs, true);
     return s.empty() ? filename : s;
 }
@@ -3035,8 +3042,6 @@ ImageCache::create (bool shared)
         spin_lock guard (shared_image_cache_mutex);
         if (! shared_image_cache.get())
             shared_image_cache.reset (new ImageCacheImpl);
-        else
-            shared_image_cache->invalidate_all ();
 
 #if 0
         std::cerr << " shared ImageCache is "
@@ -3084,5 +3089,4 @@ ImageCache::destroy (ImageCache *x)
     destroy (x, false);
 }
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END

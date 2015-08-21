@@ -35,6 +35,68 @@ namespace PyOpenImageIO
 using namespace boost::python;
 
 
+
+const char *
+python_array_code (TypeDesc format)
+{
+    switch (format.basetype) {
+    case TypeDesc::UINT8 :  return "B";
+    case TypeDesc::INT8 :   return "b";
+    case TypeDesc::UINT16 : return "H";
+    case TypeDesc::INT16 :  return "h";
+    case TypeDesc::UINT32 : return "I";
+    case TypeDesc::INT32 :  return "i";
+    case TypeDesc::FLOAT :  return "f";
+    case TypeDesc::DOUBLE : return "d";
+    default :               return "f";   // Punt -- return float
+    }
+}
+
+
+
+TypeDesc
+typedesc_from_python_array_code (char code)
+{
+    switch (code) {
+    case 'b' :
+    case 'c' : return TypeDesc::INT8;
+    case 'B' : return TypeDesc::UINT8;
+    case 'h' : return TypeDesc::INT16;
+    case 'H' : return TypeDesc::UINT16;
+    case 'i' : return TypeDesc::INT;
+    case 'I' : return TypeDesc::UINT;
+    case 'l' : return TypeDesc::INT;
+    case 'L' : return TypeDesc::UINT;
+    case 'f' : return TypeDesc::FLOAT;
+    case 'd' : return TypeDesc::DOUBLE;
+    }
+    return TypeDesc::UNKNOWN;
+}
+
+
+
+object
+C_array_to_Python_array (const char *data, TypeDesc type, size_t size)
+{
+    // Construct a Python array, convert the buffer we read into a string
+    // and then into the array.
+    object arr_module(handle<>(PyImport_ImportModule("array")));
+    object array = arr_module.attr("array")(python_array_code(type));
+#if PY_MAJOR_VERSION >= 3
+    object string_py(handle<>(PyBytes_FromStringAndSize(data, size)));
+#else
+    object string_py(handle<>(PyString_FromStringAndSize(data, size)));
+#endif
+#if (PY_MAJOR_VERSION < 3) || (PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION < 2)
+    array.attr("fromstring")(string_py);
+#else
+    array.attr("frombytes")(string_py);
+#endif
+    return array;
+}
+
+
+
 struct ustring_to_python_str {
     static PyObject* convert(ustring const& s) {
         return boost::python::incref(boost::python::object(s.string()).ptr());
@@ -168,6 +230,38 @@ oiio_attribute_tuple_typed (const std::string &name,
 
 
 
+const void *
+python_array_address (numeric::array &data, TypeDesc &elementtype,
+                      size_t &numelements)
+{
+    // Figure out the type of the array
+    object tcobj = data.attr("typecode");
+    extract<char> tce (tcobj);
+    char typecode = tce.check() ? (char)tce : 0;
+    elementtype = typedesc_from_python_array_code (typecode);
+    if (elementtype == TypeDesc::UNKNOWN)
+        return NULL;
+
+    // TODO: The PyObject_AsReadBuffer is a deprecated API dating from
+    // Python 1.6 (see https://docs.python.org/2/c-api/objbuffer.html). It
+    // still works in 2.x, but for future-proofing, we should switch to the
+    // memory buffer interface:
+    // https://docs.python.org/2/c-api/buffer.html#bufferobjects
+    // https://docs.python.org/3/c-api/buffer.html
+    const void *addr = NULL;
+    Py_ssize_t pylen = 0;
+    int success = PyObject_AsReadBuffer(data.ptr(), &addr, &pylen);
+    if (success != 0) {
+        throw_error_already_set();
+        return NULL;
+    }
+
+    numelements = size_t(pylen) / elementtype.size();
+    return addr;
+}
+
+
+
 // This OIIO_DECLARE_PYMODULE mojo is necessary if we want to pass in the
 // MODULE name as a #define. Google for Argument-Prescan for additional
 // info on why this is necessary
@@ -186,6 +280,7 @@ OIIO_DECLARE_PYMODULE(OIIO_PYMODULE_NAME) {
     declare_paramvalue();
     declare_imagespec();
     declare_roi();
+    declare_deepdata();
 
     // Main OIIO I/O classes
     declare_imageinput();

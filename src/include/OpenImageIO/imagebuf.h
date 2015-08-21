@@ -51,8 +51,7 @@
 #include <limits>
 
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
 
 class ImageBuf;
 
@@ -479,17 +478,32 @@ public:
     /// maxchannels (will be clamped to the actual number of channels).
     void setpixel (int i, const float *pixel, int maxchannels=1000);
 
-    /// Retrieve the rectangle of pixels spanning [xbegin..xend) X
-    /// [ybegin..yend) X [zbegin..zend), channels [chbegin,chend) (all
-    /// with exclusive 'end'), specified as integer pixel coordinates,
-    /// at the current subimage and MIP-map level, storing the pixel
-    /// values beginning at the address specified by result and with the
-    /// given strides (by default, AutoStride means the usual contiguous
-    /// packing of pixels) and converting into the data type described
-    /// by 'format'.  It is up to the caller to ensure that result
-    /// points to an area of memory big enough to accommodate the
-    /// requested rectangle.  Return true if the operation could be
-    /// completed, otherwise return false.
+    /// Retrieve the rectangle of pixels spanning the ROI (including
+    /// channels) at the current subimage and MIP-map level, storing the
+    /// pixel values beginning at the address specified by result and with
+    /// the given strides (by default, AutoStride means the usual contiguous
+    /// packing of pixels) and converting into the data type described by
+    /// 'format'.  It is up to the caller to ensure that result points to an
+    /// area of memory big enough to accommodate the requested rectangle.
+    /// Return true if the operation could be completed, otherwise return
+    /// false.
+    bool get_pixels (ROI roi, TypeDesc format, void *result,
+                     stride_t xstride=AutoStride,
+                     stride_t ystride=AutoStride,
+                     stride_t zstride=AutoStride) const;
+
+    /// Copy the data into the given ROI of the ImageBuf. The data points to
+    /// values specified by 'format', with layout detailed by the stride
+    /// values (in bytes, with AutoStride indicating "contiguous" layout).
+    /// It is up to the caller to ensure that data points to an area of
+    /// memory big enough to account for the ROI. Return true if the
+    /// operation could be completed, otherwise return false.
+    bool set_pixels (ROI roi, TypeDesc format, const void *data,
+                     stride_t xstride=AutoStride,
+                     stride_t ystride=AutoStride,
+                     stride_t zstride=AutoStride);
+
+    /// DEPRECATED (1.6) -- use get_pixels(ROI, ...) instead.
     bool get_pixel_channels (int xbegin, int xend, int ybegin, int yend,
                              int zbegin, int zend, int chbegin, int chend,
                              TypeDesc format, void *result,
@@ -497,16 +511,7 @@ public:
                              stride_t ystride=AutoStride,
                              stride_t zstride=AutoStride) const;
 
-    /// Retrieve the rectangle of pixels spanning [xbegin..xend) X
-    /// [ybegin..yend) X [zbegin..zend) (with exclusive 'end'),
-    /// specified as integer pixel coordinates, at the current MIP-map
-    /// level, storing the pixel values beginning at the address
-    /// specified by result and with the given strides (by default,
-    /// AutoStride means the usual contiguous packing of pixels) and
-    /// converting into the data type described by 'format'.  It is up
-    /// to the caller to ensure that result points to an area of memory
-    /// big enough to accommodate the requested rectangle.  Return true
-    /// if the operation could be completed, otherwise return false.
+    /// DEPRECATED (1.6) -- use get_pixels(ROI, ...) instead.
     bool get_pixels (int xbegin, int xend, int ybegin, int yend,
                      int zbegin, int zend,
                      TypeDesc format, void *result,
@@ -514,16 +519,7 @@ public:
                      stride_t ystride=AutoStride,
                      stride_t zstride=AutoStride) const;
 
-    /// Retrieve the rectangle of pixels spanning [xbegin..xend) X
-    /// [ybegin..yend) (with exclusive 'end'), specified as integer
-    /// pixel coordinates, at the current MIP-map level, storing the
-    /// pixel values beginning at the address specified by result and
-    /// with the given strides (by default, AutoStride means the usual
-    /// contiguous packing of pixels), converting to the type <T> in the
-    /// process.  It is up to the caller to ensure that result points to
-    /// an area of memory big enough to accommodate the requested
-    /// rectangle.  Return true if the operation could be completed,
-    /// otherwise return false.
+    /// DEPRECATED (1.6) -- use get_pixels(ROI, ...) instead.
     template<typename T>
     bool get_pixel_channels (int xbegin, int xend, int ybegin, int yend,
                              int zbegin, int zend, int chbegin, int chend,
@@ -531,6 +527,7 @@ public:
                              stride_t ystride=AutoStride,
                              stride_t zstride=AutoStride) const;
 
+    /// DEPRECATED (1.6) -- use get_pixels(ROI, ...) instead.
     template<typename T>
     bool get_pixels (int xbegin, int xend, int ybegin, int yend,
                      int zbegin, int zend, T *result,
@@ -542,12 +539,7 @@ public:
                                    xstride, ystride, zstride);
     }
 
-    /// Even safer version of get_pixels: Retrieve the rectangle of
-    /// pixels spanning [xbegin..xend) X [ybegin..yend) (with exclusive
-    /// 'end'), specified as integer pixel coordinates, at the current
-    /// MIP-map level, storing the pixel values in the 'result' vector
-    /// (even allocating the right size).  Return true if the operation
-    /// could be completed, otherwise return false.
+    /// DEPRECATED (1.6) -- use get_pixels(ROI, ...) instead.
     template<typename T>
     bool get_pixels (int xbegin_, int xend_, int ybegin_, int yend_,
                       int zbegin_, int zend_,
@@ -557,6 +549,7 @@ public:
         return get_pixels (xbegin_, xend_, ybegin_, yend_, zbegin_, zend_,
                            &result[0]);
     }
+
 
     int orientation () const;
     void set_orientation (int orient);
@@ -674,6 +667,10 @@ public:
 
     /// Retrieve deep sample value within a pixel, as an untigned int.
     uint32_t deep_value_uint (int x, int y, int z, int c, int s) const;
+
+    /// Set the number of deep samples for a particular pixel.
+    void set_deep_samples (int x, int y, int z, int nsamples);
+
     /// Set deep sample value within a pixel, as a float.
     void set_deep_value (int x, int y, int z, int c, int s, float value);
     /// Set deep sample value within a pixel, as a uint32.
@@ -809,7 +806,7 @@ public:
         }
 
         /// Retrieve the number of deep data samples at this pixel.
-        int deep_samples () { return m_ib->deep_samples (m_x, m_y, m_z); }
+        int deep_samples () const { return m_ib->deep_samples (m_x, m_y, m_z); }
 
         /// Return the wrap mode
         WrapMode wrap () const { return m_wrap; }
@@ -999,6 +996,14 @@ public:
             }
         }
 
+        // Set to the "done" position
+        void pos_done () {
+            m_valid = false;
+            m_x = m_rng_xbegin;
+            m_y = m_rng_ybegin;
+            m_z = m_rng_zend;
+        }
+
         // Make sure it's writeable. Use with caution!
         void make_writeable () {
             if (! m_localpixels) {
@@ -1039,6 +1044,9 @@ public:
         {
             make_writeable ();
             pos (m_rng_xbegin,m_rng_ybegin,m_rng_zbegin);
+            if (m_rng_xbegin == m_rng_xend || m_rng_ybegin == m_rng_yend
+                  || m_rng_zbegin == m_rng_zend)
+                pos_done();  // make empty range look "done"
         }
         /// Construct from an ImageBuf and a specific pixel index.
         /// The iteration range is the full image.
@@ -1055,6 +1063,9 @@ public:
         {
             make_writeable ();
             pos (m_rng_xbegin, m_rng_ybegin, m_rng_zbegin);
+            if (m_rng_xbegin == m_rng_xend || m_rng_ybegin == m_rng_yend
+                  || m_rng_zbegin == m_rng_zend)
+                pos_done();  // make empty range look "done"
         }
         /// Construct from an ImageBuf and designated region -- iterate
         /// over region, starting with the upper left pixel.
@@ -1065,6 +1076,9 @@ public:
         {
             make_writeable ();
             pos (m_rng_xbegin, m_rng_ybegin, m_rng_zbegin);
+            if (m_rng_xbegin == m_rng_xend || m_rng_ybegin == m_rng_yend
+                  || m_rng_zbegin == m_rng_zend)
+                pos_done();  // make empty range look "done"
         }
         /// Copy constructor.
         ///
@@ -1108,10 +1122,26 @@ public:
 
         void * rawptr () const { return m_proxydata; }
 
+        /// Set the number of deep data samples at this pixel. (Only use
+        /// this if deep_alloc() has not yet been called on the buffer.)
+        void set_deep_samples (int n) {
+            return const_cast<ImageBuf*>(m_ib)->set_deep_samples (m_x, m_y, m_z, n);
+        }
+
         /// Retrieve the deep data value of sample s of channel c.
         USERT deep_value (int c, int s) const {
             return convert_type<float,USERT>(m_ib->deep_value (m_x, m_y, m_z, c, s));
         }
+
+        /// Set the deep data value of sample s of channel c. (Only use this
+        /// if deep_alloc() has been called.)
+        void set_deep_value (int c, int s, float value) {
+            return const_cast<ImageBuf*>(m_ib)->set_deep_value (m_x, m_y, m_z, c, s, value);
+        }
+        void set_deep_value (int c, int s, uint32_t value) {
+            return const_cast<ImageBuf*>(m_ib)->set_deep_value_uint (m_x, m_y, m_z, c, s, value);
+        }
+
     };
 
 
@@ -1126,6 +1156,9 @@ public:
             : IteratorBase(ib,wrap)
         {
             pos (m_rng_xbegin,m_rng_ybegin,m_rng_zbegin);
+            if (m_rng_xbegin == m_rng_xend || m_rng_ybegin == m_rng_yend
+                  || m_rng_zbegin == m_rng_zend)
+                pos_done();  // make empty range look "done"
         }
         /// Construct from an ImageBuf and a specific pixel index.
         /// The iteration range is the full image.
@@ -1141,6 +1174,9 @@ public:
             : IteratorBase (ib, roi, wrap)
         {
             pos (m_rng_xbegin, m_rng_ybegin, m_rng_zbegin);
+            if (m_rng_xbegin == m_rng_xend || m_rng_ybegin == m_rng_yend
+                  || m_rng_zbegin == m_rng_zend)
+                pos_done();  // make empty range look "done"
         }
         /// Construct from an ImageBuf and designated region -- iterate
         /// over region, starting with the upper left pixel.
@@ -1150,6 +1186,9 @@ public:
             : IteratorBase(ib, xbegin, xend, ybegin, yend, zbegin, zend, wrap)
         {
             pos (m_rng_xbegin, m_rng_ybegin, m_rng_zbegin);
+            if (m_rng_xbegin == m_rng_xend || m_rng_ybegin == m_rng_yend
+                  || m_rng_zbegin == m_rng_zend)
+                pos_done();  // make empty range look "done"
         }
         /// Copy constructor.
         ///
@@ -1229,7 +1268,6 @@ protected:
 };
 
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END
 
 #endif // OPENIMAGEIO_IMAGEBUF_H

@@ -558,8 +558,17 @@ TIFFOutput::put_parameter (const std::string &name, TypeDesc type,
 bool
 TIFFOutput::write_exif_data ()
 {
-#if TIFFLIB_VERSION >= 20120922
+#if defined(TIFF_VERSION_BIG) && TIFFLIB_VERSION >= 20120922
     // Older versions of libtiff do not support writing Exif directories
+
+    if (m_spec.get_int_attribute ("tiff:write_exif", 1) == 0) {
+        // The special metadata "tiff:write_exif", if present and set to 0
+        // (the default is 1), will cause us to skip outputting Exif data.
+        // This is useful in cases where we think the TIFF file will need to
+        // be read by an app that links against an old version of libtiff
+        // that will have trouble reading the Exif directory.
+        return true;
+    }
 
     // First, see if we have any Exif data at all
     bool any_exif = false;

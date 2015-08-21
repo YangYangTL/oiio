@@ -47,8 +47,7 @@
 
 
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
 
 
 template<class D, class S>
@@ -121,6 +120,22 @@ crop_ (ImageBuf &dst, const ImageBuf &src,
     }
 
     // Serial case
+
+    // Deep
+    if (dst.deep()) {
+        ImageBuf::ConstIterator<S,D> s (src, roi);
+        for (ImageBuf::Iterator<D,D> d (dst, roi);  ! d.done();  ++d, ++s) {
+            int samples = d.deep_samples ();
+            if (samples == 0)
+                continue;
+            for (int c = roi.chbegin;  c < roi.chend;  ++c)
+                for (int samp = 0; samp < samples; ++samp)
+                    d.set_deep_value (c, samp, (float)s.deep_value(c, samp));
+        }
+        return true;
+    }
+    // Below is the non-deep case
+
     ImageBuf::ConstIterator<S,D> s (src, roi);
     ImageBuf::Iterator<D,D> d (dst, roi);
     for ( ;  ! d.done();  ++d, ++s) {
@@ -139,6 +154,15 @@ ImageBufAlgo::crop (ImageBuf &dst, const ImageBuf &src,
     dst.clear ();
     roi.chend = std::min (roi.chend, src.nchannels());
     IBAprep (roi, &dst, &src);
+
+    if (dst.deep()) {
+        // If it's deep, figure out the sample allocations first
+        ImageBuf::ConstIterator<float> s (src, roi);
+        for (ImageBuf::Iterator<float> d (dst, roi);  !d.done();  ++d, ++s)
+            d.set_deep_samples (s.deep_samples());
+        dst.deep_alloc ();
+    }
+
     bool ok;
     OIIO_DISPATCH_TYPES2 (ok, "crop", crop_, dst.spec().format, src.spec().format,
                           dst, src, roi, nthreads);
@@ -644,9 +668,10 @@ ImageBufAlgo::channels (ImageBuf &dst, const ImageBuf &src,
     ImageSpec newspec = src.spec();
     newspec.nchannels = nchannels;
     newspec.default_channel_names ();
+    newspec.channelformats.clear();
     newspec.alpha_channel = -1;
     newspec.z_channel = -1;
-    std::vector<TypeDesc> newchanneltypes;
+    bool all_same_type = true;
     for (int c = 0; c < nchannels;  ++c) {
         int csrc = channelorder[c];
         // If the user gave an explicit name for this channel, use it...
@@ -661,10 +686,10 @@ ImageBufAlgo::channels (ImageBuf &dst, const ImageBuf &src,
         else if (csrc >= 0 && csrc < src.spec().nchannels) {
             newspec.channelnames[c] = src.spec().channelnames[csrc];
         }
-        if (csrc >= 0)
-            newchanneltypes.push_back (src.spec().channelformat(csrc));
-        else
-            newchanneltypes.push_back (TypeDesc::TypeFloat);
+        TypeDesc type = src.spec().channelformat(csrc);
+        newspec.channelformats.push_back (type);
+        if (type != newspec.channelformats.front())
+            all_same_type = false;
         // Use the names (or designation of the src image, if
         // shuffle_channel_names is true) to deduce the alpha and z channels.
         if ((shuffle_channel_names && csrc == src.spec().alpha_channel) ||
@@ -675,6 +700,8 @@ ImageBufAlgo::channels (ImageBuf &dst, const ImageBuf &src,
               Strutil::iequals (newspec.channelnames[c], "Z"))
             newspec.z_channel = c;
     }
+    if (all_same_type)                      // clear per-chan formats if
+        newspec.channelformats.clear();     // they're all the same
 
     // Update the image (realloc with the new spec)
     dst.reset (newspec);
@@ -685,31 +712,32 @@ ImageBufAlgo::channels (ImageBuf &dst, const ImageBuf &src,
         const DeepData &srcdata (*src.deepdata());
         DeepData &dstdata (*dst.deepdata());
         // The earlier dst.alloc() already called dstdata.init()
-        dstdata.nsamples = srcdata.nsamples;
+        for (int p = 0, npels = (int)newspec.image_pixels(); p < npels; ++p)
+            dstdata.set_samples (p, srcdata.samples(p));
         dst.deep_alloc ();
         for (int p = 0, npels = (int)newspec.image_pixels(); p < npels; ++p) {
-            if (! dstdata.nsamples[p])
+            if (! dstdata.samples(p))
                 continue;   // no samples for this pixel
             for (int c = 0;  c < newspec.nchannels;  ++c) {
                 int csrc = channelorder[c];
                 if (csrc < 0) {
                     // Replacing the channel with a new value
                     float val = channelvalues ? channelvalues[c] : 0.0f;
-                    for (int s = 0, ns = dstdata.nsamples[p]; s < ns; ++s)
+                    for (int s = 0, ns = dstdata.samples(p); s < ns; ++s)
                         dstdata.set_deep_value (p, c, s, val);
-                } else if (dstdata.channeltypes[c] == srcdata.channeltypes[csrc]) {
+                } else if (dstdata.channeltype(c) == srcdata.channeltype(csrc)) {
                     // Same channel types -- copy all samples at once
                     memcpy (dstdata.channel_ptr(p,c), srcdata.channel_ptr(p,csrc),
-                            dstdata.nsamples[p] * newchanneltypes[csrc].size());
+                            dstdata.samples(p) * srcdata.channeltype(csrc).size());
                 } else {
-                    if (newchanneltypes[c] == TypeDesc::UINT)
-                        for (int s = 0, ns = dstdata.nsamples[p]; s < ns; ++s)
+                    if (dstdata.channeltype(c) == TypeDesc::UINT)
+                        for (int s = 0, ns = dstdata.samples(p); s < ns; ++s)
+                            dstdata.set_deep_value (p, c, s,
+                                          srcdata.deep_value_uint(p,csrc,s));
+                    else
+                        for (int s = 0, ns = dstdata.samples(p); s < ns; ++s)
                             dstdata.set_deep_value (p, c, s,
                                           srcdata.deep_value(p,csrc,s));
-                    else
-                        for (int s = 0, ns = dstdata.nsamples[p]; s < ns; ++s)
-                            dstdata.set_deep_value_uint (p, c, s,
-                                          srcdata.deep_value_uint(p,csrc,s));
                 }
             }
         }
@@ -830,5 +858,4 @@ ImageBufAlgo::channel_append (ImageBuf &dst, const ImageBuf &A,
 
 
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END

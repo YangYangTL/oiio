@@ -29,10 +29,10 @@
   (This is the Modified BSD License)
 */
 
-
 #include <cassert>
 #include <cstdio>
 #include <vector>
+
 
 extern "C" {
 #define XMD_H
@@ -40,6 +40,7 @@ extern "C" {
 #undef XMD_H
 
 }
+
 
 #include "OpenImageIO/imageio.h"
 #include "OpenImageIO/filesystem.h"
@@ -60,7 +61,7 @@ class JpgOutput : public ImageOutput {
     JpgOutput () { init(); }
     virtual ~JpgOutput () { close(); }
     virtual const char * format_name (void) const { return "jpeg"; }
-    virtual int supports (string_view feature) {
+    virtual int supports (string_view feature) const {
         return (feature == "exif"
              || feature == "iptc");
     }

@@ -62,8 +62,7 @@
 
 
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
 
 
 inline void
@@ -643,13 +642,43 @@ ImageBufAlgo::color_range_check (const ImageBuf &src, imagesize_t *lowcount,
 
 
 
+// Helper: is the roi devoid of any deep samples?
+static ROI
+deep_nonempty_region (const ImageBuf &src, ROI roi)
+{
+    DASSERT (src.deep());
+    ROI r;   // Initially undefined
+    for (int z = roi.zbegin; z < roi.zend; ++z)
+        for (int y = roi.ybegin; y < roi.yend; ++y)
+            for (int x = roi.xbegin; x < roi.xend; ++x)
+                if (src.deep_samples (x, y, z) != 0) {
+                    if (! r.defined()) {
+                        r = ROI (x, x+1, y, y+1, z, z+1, 0, src.nchannels());
+                    } else {
+                        r.xbegin = std::min (x,   r.xbegin);
+                        r.xend   = std::max (x+1, r.xend);
+                        r.ybegin = std::min (y,   r.ybegin);
+                        r.yend   = std::max (y+1, r.yend);
+                        r.zbegin = std::min (z,   r.zbegin);
+                        r.zend   = std::max (z+1, r.zend);
+                    }
+                }
+    return r;
+}
+
+
+
 ROI
 ImageBufAlgo::nonzero_region (const ImageBuf &src, ROI roi, int nthreads)
 {
+    roi = roi_intersection (roi, src.roi());
+
+    if (src.deep()) {
+        return deep_nonempty_region (src, roi);
+    }
+
     std::vector<float> zero (src.nchannels(), 0.0f);
     std::vector<float> color (src.nchannels(), 0.0f);
-    if (! roi.defined())
-        roi = get_roi (src.spec());
     // Trim bottom
     for ( ; roi.ybegin < roi.yend; --roi.yend) {
         ROI test = roi;  test.ybegin = roi.yend-1;
@@ -1010,5 +1039,4 @@ ImageBufAlgo::histogram_draw (ImageBuf &R,
 
 
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END

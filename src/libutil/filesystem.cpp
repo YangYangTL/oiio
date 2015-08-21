@@ -40,18 +40,20 @@
 #include <boost/foreach.hpp>
 #include <boost/regex.hpp>
 
-#ifdef _WIN32
-#include <windows.h>
-#include <shellapi.h>
-#endif
-
 #include "OpenImageIO/dassert.h"
 #include "OpenImageIO/ustring.h"
 #include "OpenImageIO/filesystem.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
 
-OIIO_NAMESPACE_ENTER
-{
+
+OIIO_NAMESPACE_BEGIN
 
 
 std::string
@@ -445,6 +447,27 @@ Filesystem::unique_path (string_view model)
 
 
 
+std::string
+Filesystem::current_path()
+{
+#if BOOST_FILESYSTEM_VERSION >= 3
+    boost::system::error_code ec;
+    boost::filesystem::path p = boost::filesystem::current_path (ec);
+    return ec ? std::string() : p.string();
+#else
+    // Fallback if we don't have recent Boost
+    char path[FILENAME_MAX];
+#ifdef _WIN32
+    bool ok = _getcwd (path, sizeof(path));
+#else
+    bool ok = getcwd (path, sizeof(path));
+#endif
+    return ok ? std::string(path) : std::string();
+#endif
+}
+
+
+
 FILE*
 Filesystem::fopen (string_view path, string_view mode)
 {
@@ -692,6 +715,7 @@ Filesystem::enumerate_file_sequence (const std::string &pattern,
                                      const std::vector<int> &numbers,
                                      std::vector<std::string> &filenames)
 {
+    filenames.clear ();
     for (size_t i = 0, e = numbers.size(); i < e; ++i) {
         std::string f = Strutil::format (pattern.c_str(), numbers[i]);
         filenames.push_back (f);
@@ -708,9 +732,9 @@ Filesystem::enumerate_file_sequence (const std::string &pattern,
                                      std::vector<std::string> &filenames)
 {
     ASSERT (views.size() == 0 || views.size() == numbers.size());
-
     static boost::regex view_re ("%V"), short_view_re ("%v");
 
+    filenames.clear ();
     for (size_t i = 0, e = numbers.size(); i < e; ++i) {
         std::string f = pattern;
         if (views.size() > 0 && ! views[i].empty()) {
@@ -736,6 +760,9 @@ Filesystem::scan_for_matching_filenames(const std::string &pattern,
     static boost::regex format_re ("%0([0-9]+)d");
     static boost::regex all_views_re ("%[Vv]"), view_re ("%V"), short_view_re ("%v");
 
+    frame_numbers.clear ();
+    frame_views.clear ();
+    filenames.clear ();
     if (boost::regex_search (pattern, all_views_re)) {
         if (boost::regex_search (pattern, format_re)) {
             // case 1: pattern has format and view
@@ -805,8 +832,9 @@ Filesystem::scan_for_matching_filenames(const std::string &pattern_,
                                         std::vector<int> &numbers,
                                         std::vector<std::string> &filenames)
 {
+    numbers.clear ();
+    filenames.clear ();
     std::string pattern = pattern_;
-
     // Isolate the directory name (or '.' if none was specified)
     std::string directory = Filesystem::parent_path (pattern);
     if (directory.size() == 0) {
@@ -874,5 +902,4 @@ Filesystem::scan_for_matching_filenames(const std::string &pattern_,
     return true;
 }
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END

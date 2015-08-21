@@ -35,6 +35,12 @@ extern "C" { // ffmpeg is a C api
 #include <libswscale/swscale.h>
 }
 
+
+#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(55,28,1)
+#define av_frame_alloc  avcodec_alloc_frame
+#define av_frame_free   avcodec_free_frame
+#endif
+
 #include <boost/shared_ptr.hpp>
 #include <boost/thread/once.hpp>
 
@@ -270,7 +276,7 @@ FFmpegInput::open (const std::string &name, ImageSpec &spec)
     while ((tag = av_dict_get (m_format_context->metadata, "", tag, AV_DICT_IGNORE_SUFFIX))) {
         m_spec.attribute (tag->key, tag->value);
     }
-    m_spec.attribute ("fps", m_frame_rate.num / static_cast<float> (m_frame_rate.den));
+    m_spec.attribute ("FramesPerSecond", m_frame_rate.num / static_cast<float> (m_frame_rate.den));
     m_spec.attribute ("oiio:Movie", true);
     m_nsubimages = m_frames;
     spec = m_spec;

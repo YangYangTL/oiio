@@ -3,15 +3,27 @@ project (OpenImageIO)
 # Release version of the library
 set (OIIO_VERSION_MAJOR 1)
 set (OIIO_VERSION_MINOR 6)
-set (OIIO_VERSION_PATCH 3)
+set (OIIO_VERSION_PATCH 4)
 set (OIIO_VERSION_RELEASE_TYPE "dev")   # "dev", "betaX", "RCY", ""
 
 cmake_minimum_required (VERSION 2.6)
 if (NOT CMAKE_VERSION VERSION_LESS 2.8.4)
     cmake_policy (SET CMP0017 NEW)
 endif ()
-message (STATUS "Project source dir = ${PROJECT_SOURCE_DIR}")
+if (NOT CMAKE_VERSION VERSION_LESS 3.2.2)
+    cmake_policy (SET CMP0042 OLD)
+    cmake_policy (SET CMP0046 OLD)
+endif ()
+set (CMAKE_ALLOW_LOOSE_LOOP_CONSTRUCTS TRUE)
+
+if (VERBOSE)
+    message (STATUS "Project source dir = ${PROJECT_SOURCE_DIR}")
+endif ()
 message (STATUS "Project build dir = ${CMAKE_BINARY_DIR}")
+
+if ("${PROJECT_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
+    message (FATAL_ERROR "Not allowed to run in-source build!")
+endif ()
 
 if (NOT CMAKE_BUILD_TYPE)
     set (CMAKE_BUILD_TYPE "Release")
@@ -36,24 +48,36 @@ if (CMAKE_COMPILER_IS_GNUCC)
     execute_process (COMMAND ${CMAKE_C_COMPILER} -dumpversion
                      OUTPUT_VARIABLE GCC_VERSION
                      OUTPUT_STRIP_TRAILING_WHITESPACE)
-    message (STATUS "Using gcc ${GCC_VERSION} as the compiler")
+    if (VERBOSE)
+        message (STATUS "Using gcc ${GCC_VERSION} as the compiler")
+    endif ()
 endif ()
 message (STATUS "CMAKE_CXX_COMPILER is ${CMAKE_CXX_COMPILER}")
 message (STATUS "CMAKE_CXX_COMPILER_ID is ${CMAKE_CXX_COMPILER_ID}")
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set (CMAKE_COMPILER_IS_CLANG 1)
-    message (STATUS "Using clang as the compiler")
 endif ()
-# Second try: for earlier versions of CMake, the CMAKE_CXX_COMPILER_ID
-# appears to be unreliable and may say "GNU" despite using clang, so
-# directly match against the compiler name.
 if (CMAKE_CXX_COMPILER MATCHES "[Cc]lang")
+    # Second try: for earlier versions of CMake, the CMAKE_CXX_COMPILER_ID
+    # appears to be unreliable and may say "GNU" despite using clang, so
+    # directly match against the compiler name.
     set (CMAKE_COMPILER_IS_CLANG 1)
-    message (STATUS "The compiler seems to be clang")
 endif ()
+if (CMAKE_COMPILER_IS_CLANG)
+    if (NOT CLANG_VERSION_STRING)
+        EXECUTE_PROCESS( COMMAND ${CMAKE_CXX_COMPILER} --version OUTPUT_VARIABLE clang_full_version_string )
+        string (REGEX REPLACE ".*clang version ([0-9]+\\.[0-9]+).*" "\\1" CLANG_VERSION_STRING ${clang_full_version_string})
+    endif ()
+    if (VERBOSE)
+        message (STATUS "The compiler is Clang version ${CLANG_VERSION_STRING}")
+    endif ()
+endif ()
+
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
     set (CMAKE_COMPILER_IS_INTEL 1)
-    message (STATUS "Using Intel as the compiler")
+    if (VERBOSE)
+        message (STATUS "Using Intel as the compiler")
+    endif ()
 endif ()
 
 ## turn on more detailed warnings and consider warnings as errors
@@ -82,10 +106,14 @@ if (CMAKE_COMPILER_IS_CLANG)
     add_definitions ("-Wno-overloaded-virtual")
     add_definitions ("-Wno-unneeded-internal-declaration")
     add_definitions ("-Wno-unused-private-field")
+    add_definitions ("-Wno-tautological-compare")
     # disable warning about unused command line arguments
     add_definitions ("-Qunused-arguments")
     # Don't warn if we ask it not to warn about warnings it doesn't know
     add_definitions ("-Wunknown-warning-option")
+    if (CLANG_VERSION_STRING VERSION_GREATER 3.5)
+        add_definitions ("-Wno-unused-local-typedefs")
+    endif ()
 endif ()
 
 if (CMAKE_COMPILER_IS_GNUCC AND (NOT CMAKE_COMPILER_IS_CLANG) AND (NOT ${GCC_VERSION} VERSION_LESS 4.8))
@@ -106,6 +134,12 @@ if (CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_GNUCC)
             set (VISIBILITY_MAP_COMMAND "-Wl,--version-script=${PROJECT_SOURCE_DIR}/src/libOpenImageIO/libOpenImageIO.map")
         endif ()
     endif ()
+endif ()
+
+# Try to detect if this is an OSX distro new enough that the system library
+# is libc++.
+if (EXISTS "/usr/lib/libc++.dylib")
+    set (OSL_SYSTEM_HAS_LIBCPP ON)
 endif ()
 
 
@@ -129,6 +163,7 @@ set (USE_OPENCV ON CACHE BOOL "Use OpenCV if found")
 set (USE_OPENSSL OFF CACHE BOOL "Use OpenSSL if found (for faster SHA-1)")
 set (USE_FREETYPE ON CACHE BOOL "Use Freetype if found")
 set (USE_GIF ON CACHE BOOL "Use GIF if found")
+set (USE_PTEX ON CACHE BOOL "Use PTex if found")
 set (USE_LIBRAW ON CACHE BOOL "Use LibRaw if found")
 set (LIBRAW_PATH "" CACHE STRING "Custom LibRaw path")
 set (NOTHREADS OFF CACHE BOOL "Compile with no threads or locking")
@@ -148,8 +183,9 @@ set (SOVERSION ${OIIO_VERSION_MAJOR}.${OIIO_VERSION_MINOR}
 set (PYLIB_INCLUDE_SONAME OFF CACHE BOOL "If ON, soname/soversion will be set for Python module library")
 set (PYLIB_LIB_PREFIX OFF CACHE BOOL "If ON, prefix the Python module with 'lib'")
 set (BUILD_OIIOUTIL_ONLY OFF CACHE BOOL "If ON, will build *only* libOpenImageIO_Util")
-set (USE_CPP11 OFF CACHE BOOL "Compile in C++11 mode")
-set (USE_LIBCPLUSPLUS OFF CACHE BOOL "Compile with clang libc++")
+set (OIIO_BUILD_CPP11 OFF CACHE BOOL "Compile in C++11 mode")
+set (OIIO_BUILD_CPP14 OFF CACHE BOOL "Compile in C++14 mode")
+set (OIIO_BUILD_LIBCPLUSPLUS OFF CACHE BOOL "Compile with clang libc++")
 set (EXTRA_CPP_ARGS "" CACHE STRING "Extra C++ command line definitions")
 set (USE_SIMD "" CACHE STRING "Use SIMD directives (0, sse2, sse3, ssse3, sse4.1, sse4.2)")
 
@@ -177,11 +213,17 @@ if (EXTRA_CPP_ARGS)
     add_definitions ("${EXTRA_CPP_ARGS}")
 endif()
 
-if (USE_CPP11)
-    message (STATUS "Building for C++11")
-    add_definitions ("-std=c++11")
+if (OIIO_BUILD_CPP11 OR OIIO_BUILD_CPP14)
+    if (OIIO_BUILD_CPP11)
+        message (STATUS "Building for C++11")
+        add_definitions ("-std=c++11")
+    endif()
+    if (OIIO_BUILD_CPP14)
+        message (STATUS "Building for C++14")
+        add_definitions ("-std=c++14")
+    endif()
     if (CMAKE_COMPILER_IS_CLANG)
-        # C++11 doesn't like 'register' keyword, which is in Qt headers
+        # C++ >= 11 doesn't like 'register' keyword, which is in Qt headers
         add_definitions ("-Wno-deprecated-register")
     endif ()
 endif ()
@@ -196,11 +238,17 @@ if (NOT USE_SIMD STREQUAL "")
     if (USE_SIMD STREQUAL "0")
         add_definitions ("-DOIIO_NO_SSE=1")
     else ()
-        if (MSVC OR CMAKE_COMPILER_IS_INTEL)
-            add_definitions ("/arch:${USE_SIMD}")
-        else ()
-            add_definitions ("-m${USE_SIMD}")
-        endif ()
+        string (REPLACE "," ";" SIMD_FEATURE_LIST ${USE_SIMD})
+        foreach (feature ${SIMD_FEATURE_LIST})
+            if (VERBOSE)
+                message (STATUS "SIMD feature: ${feature}")
+            endif ()
+            if (MSVC OR CMAKE_COMPILER_IS_INTEL)
+                add_definitions ("/arch:${feature}")
+            else ()
+                add_definitions ("-m${feature}")
+            endif ()
+        endforeach()
     endif ()
 endif ()
 
@@ -216,7 +264,6 @@ if (NOT OIIO_NAMESPACE)
 endif ()
 
 message(STATUS "Setting Namespace to: ${OIIO_NAMESPACE}")
-
 
 include (util_macros)
 include (oiio_macros)
@@ -244,6 +291,7 @@ if (UNIX AND NOT SELF_CONTAINED_INSTALL_TREE)
     set (DEFAULT_PYLIB3_INSTALL_DIR "lib/python3/site-packages")
     set (DEFAULT_DOC_INSTALL_DIR "share/doc/OpenImageIO")
     set (DEFAULT_MAN_INSTALL_DIR "share/man/man1")
+    set (DEFAULT_FONTS_INSTALL_DIR "share/fonts/oiio")
 else ()
     # Here is the "self-contained install tree" case: the expectation here is
     # that everything OIIO related will go into its own directory, not into
@@ -252,6 +300,7 @@ else ()
     set (DEFAULT_PYLIB3_INSTALL_DIR "python3")
     set (DEFAULT_DOC_INSTALL_DIR "doc")
     set (DEFAULT_MAN_INSTALL_DIR "doc/man")
+    set (DEFAULT_FONTS_INSTALL_DIR "fonts/oiio")
 endif ()
 if (EXEC_INSTALL_PREFIX)
     # Tack on an extra prefix to support multi-arch builds.
@@ -259,6 +308,7 @@ if (EXEC_INSTALL_PREFIX)
     set (DEFAULT_LIB_INSTALL_DIR   "${EXEC_INSTALL_PREFIX}/${DEFAULT_LIB_INSTALL_DIR}")
     set (DEFAULT_PYLIB_INSTALL_DIR "${EXEC_INSTALL_PREFIX}/${DEFAULT_PYLIB_INSTALL_DIR}")
     set (DEFAULT_PYLIB3_INSTALL_DIR "${EXEC_INSTALL_PREFIX}/${DEFAULT_PYLIB3_INSTALL_DIR}")
+    set (DEFAULT_FONTS_INSTALL_DIR "${EXEC_INSTALL_PREFIX}/${DEFAULT_FONTS_INSTALL_DIR}")
 endif ()
 # Set up cmake cache variables corresponding to the defaults deduced above, so
 # that the user can override them as desired:
@@ -274,6 +324,8 @@ set (INCLUDE_INSTALL_DIR ${DEFAULT_INCLUDE_INSTALL_DIR} CACHE STRING
      "Install location of header files (relative to CMAKE_INSTALL_PREFIX or absolute)")
 set (DOC_INSTALL_DIR ${DEFAULT_DOC_INSTALL_DIR} CACHE STRING
      "Install location for documentation (relative to CMAKE_INSTALL_PREFIX or absolute)")
+set (FONTS_INSTALL_DIR ${DEFAULT_FONTS_INSTALL_DIR} CACHE STRING
+     "Install location for fonts (relative to CMAKE_INSTALL_PREFIX or absolute)")
 if (UNIX)
     set (MAN_INSTALL_DIR ${DEFAULT_MAN_INSTALL_DIR} CACHE STRING
          "Install location for manual pages (relative to CMAKE_INSTALL_PREFIX or absolute)")
@@ -281,6 +333,7 @@ endif()
 set (PLUGIN_SEARCH_PATH "" CACHE STRING "Default plugin search path")
 
 set (INSTALL_DOCS ON CACHE BOOL "Install documentation")
+set (INSTALL_FONTS ON CACHE BOOL "Install default fonts")
 
 
 ###########################################################################
@@ -384,6 +437,7 @@ endif ()
 
 add_subdirectory (src/include)
 add_subdirectory (src/doc)
+add_subdirectory (src/fonts)
 add_subdirectory (src/nuke)
 
 
@@ -418,7 +472,7 @@ oiio_add_tests (gpsread misnamed-file nonwhole-tiles
                 oiiotool-pattern oiiotool-readerror oiiotool-text
                 perchannel dither
                 dpx ico iff png psd rla sgi
-                python-typedesc python-imagespec python-roi
+                python-typedesc python-imagespec python-roi python-deep
                 python-imageinput python-imageoutput
                 python-imagebuf python-imagebufalgo
                 maketx
@@ -427,7 +481,7 @@ oiio_add_tests (gpsread misnamed-file nonwhole-tiles
                 texture-interp-bicubic
                 texture-interp-bilinear
                 texture-interp-closest
-                texture-gray texture-grid
+                texture-gray texture-uint8 texture-uint16 texture-half
                 texture-mip-nomip texture-mip-onelevel texture-mip-trilinear
                 texture-missing texture-overscan
                 texture-pointsample texture-width0blur texture-res
@@ -482,8 +536,11 @@ oiio_add_tests (webp
 oiio_add_tests (field3d texture-field3d
     FOUNDVAR FIELD3D_FOUND)
 
+oiio_add_tests (ptex
+    FOUNDVAR USE_PTEX)
+
 if (SPI_TESTS)
-  oiio_add_tests (spi
+  oiio_add_tests (oiiotool-spi
     FOUNDVAR SPI_TESTS
     IMAGEDIR spi-oiio-tests
     URL "noplace -- it's SPI specific tests")

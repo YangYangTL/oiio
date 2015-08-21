@@ -57,6 +57,7 @@ void declare_imageinput();
 void declare_imageoutput();
 void declare_typedesc();
 void declare_roi();
+void declare_deepdata();
 void declare_imagecache();
 void declare_imagebuf();
 void declare_imagebufalgo();
@@ -65,6 +66,15 @@ void declare_global();
 
 bool PyProgressCallback(void*, float);
 object C_array_to_Python_array (const char *data, TypeDesc type, size_t size);
+const char * python_array_code (TypeDesc format);
+TypeDesc typedesc_from_python_array_code (char code);
+
+
+// Given python array 'data', figure out its element type and number of
+// elements, and return the memory address of its contents.  Return NULL as
+// the address for an error.
+const void * python_array_address (numeric::array &data, TypeDesc &elementtype,
+                                   size_t &numelements);
 
 
 
@@ -91,6 +101,16 @@ void py_to_stdvector (std::vector<T> &vals, const tuple &tup)
 {
     for (int i = 0, e = len(tup); i < e; ++i)
         py_to_stdvector<T> (vals, tup[i]);
+}
+
+
+
+// Suck up a tuple of presumed T values into a vector<T>
+template<typename T>
+void py_to_stdvector (std::vector<T> &vals, const numeric::array &arr)
+{
+    for (int i = 0, e = len(arr); i < e; ++i)
+        vals.push_back (extract<T>(arr[i]));
 }
 
 
@@ -167,6 +187,11 @@ public:
     object read_tiles (int xbegin, int xend, int ybegin, int yend,
                        int zbegin, int zend, int chbegin, int chend,
                        TypeDesc format);
+    object read_native_deep_scanlines (int ybegin, int yend, int z,
+                                       int chbegin, int chend);
+    object read_native_deep_tiles (int xbegin, int xend, int ybegin, int yend,
+                                   int zbegin, int zend, int chbegin, int chend);
+    object read_native_deep_image ();
     std::string geterror() const;
 };
 
@@ -187,10 +212,12 @@ public:
                          stride_t xstride=AutoStride);
     bool write_scanline_bt (int, int, TypeDesc::BASETYPE,
                             boost::python::object&, stride_t xstride=AutoStride);
+    bool write_scanline_array (int, int, numeric::array&);
     bool write_scanlines (int, int, int, TypeDesc, boost::python::object&,
                          stride_t xstride=AutoStride);
     bool write_scanlines_bt (int, int, int, TypeDesc::BASETYPE,
                             boost::python::object&, stride_t xstride=AutoStride);
+    bool write_scanlines_array (int, int, int, numeric::array&);
     bool write_tile (int, int, int, TypeDesc, boost::python::object&,
                      stride_t xstride=AutoStride, stride_t ystride=AutoStride,
                      stride_t zstride=AutoStride);
@@ -198,6 +225,7 @@ public:
                         boost::python::object&, stride_t xstride=AutoStride,
                         stride_t ystride=AutoStride,
                         stride_t zstride=AutoStride);
+    bool write_tile_array (int, int, int, numeric::array&);
     bool write_tiles (int, int, int, int, int, int,
                       TypeDesc, boost::python::object&,
                       stride_t xstride=AutoStride, stride_t ystride=AutoStride,
@@ -207,6 +235,7 @@ public:
                          stride_t xstride=AutoStride,
                          stride_t ystride=AutoStride,
                          stride_t zstride=AutoStride);
+    bool write_tiles_array (int, int, int, int, int, int, numeric::array&);
     bool write_image (TypeDesc format, object &buffer,
                       stride_t xstride=AutoStride,
                       stride_t ystride=AutoStride,
@@ -215,6 +244,12 @@ public:
                          stride_t xstride=AutoStride,
                          stride_t ystride=AutoStride,
                          stride_t zstride=AutoStride);
+    bool write_image_array (numeric::array &buffer);
+    bool write_deep_scanlines (int ybegin, int yend, int z,
+                               const DeepData &deepdata);
+    bool write_deep_tiles (int xbegin, int xend, int ybegin, int yend,
+                           int zbegin, int zend, const DeepData &deepdata);
+    bool write_deep_image (const DeepData &deepdata);
     bool copy_image (ImageInputWrap *iiw);
     const char *format_name () const;
     int supports (const std::string&) const;

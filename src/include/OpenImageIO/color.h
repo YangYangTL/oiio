@@ -33,9 +33,10 @@
 
 #include "export.h"
 #include "oiioversion.h"
+#include "typedesc.h"
 
-OIIO_NAMESPACE_ENTER
-{
+
+OIIO_NAMESPACE_BEGIN
 
 /// The ColorProcessor encapsulates a baked color transformation, suitable for
 /// application to raw pixels, or ImageBuf(s). These are generated using
@@ -59,21 +60,24 @@ class OIIO_API ColorProcessor;
 class OIIO_API ColorConfig
 {
 public:
-    /// If OpenColorIO is enabled at build time, initialize with the current
-    /// color configuration. ($OCIO)
-    /// If OpenColorIO is not enabled, this does nothing.
+    /// Construct a ColorConfig using the named OCIO configuration file,
+    /// or if filename is empty, to the current color configuration
+    /// specified by env variable $OCIO.
     ///
-    /// Multiple calls to this are inexpensive.
-    ColorConfig();
-    
-    /// If OpenColorIO is enabled at build time, initialize with the 
-    /// specified color configuration (.ocio) file
-    /// If OpenColorIO is not enabled, this will result in an error.
-    /// 
-    /// Multiple calls to this are potentially expensive.
-    ColorConfig(string_view filename);
+    /// Multiple calls to this are potentially expensive. A ColorConfig
+    /// should usually be shared by an app for its entire runtime.
+    ColorConfig (string_view filename = "");
     
     ~ColorConfig();
+
+    /// Reset the config to the named OCIO configuration file, or if
+    /// filename is empty, to the current color configuration specified
+    /// by env variable $OCIO. Return true for success, false if there
+    /// was an error.
+    ///
+    /// Multiple calls to this are potentially expensive. A ColorConfig
+    /// should usually be shared by an app for its entire runtime.
+    bool reset (string_view filename = "");
     
     /// Has an error string occurred?
     /// (This will not affect the error state.)
@@ -93,6 +97,11 @@ public:
     /// Get the name of the color space representing the named role,
     /// or NULL if none could be identified.
     const char * getColorSpaceNameByRole (string_view role) const;
+
+    /// Get the data type that OCIO thinks this color space is. The name
+    /// may be either a color space name or a role.
+    OIIO::TypeDesc getColorSpaceDataType (string_view name, int *bits) const;
+
     
     /// Get the number of Looks defined in this configuration
     int getNumLooks() const;
@@ -186,6 +195,12 @@ public:
                                             string_view context_key="",
                                             string_view context_value="") const;
 
+    /// Given a string (like a filename), look for the longest, right-most
+    /// colorspace substring that appears. Returns "" if no such color space
+    /// is found. (This is just a wrapper around OCIO's
+    /// ColorConfig::parseColorSpaceFromString.)
+    string_view parseColorSpaceFromString (string_view str) const;
+
     /// Delete the specified ColorProcessor
     static void deleteColorProcessor(ColorProcessor * processor);
     
@@ -243,7 +258,6 @@ inline float linear_to_Rec709 (float x)
 }
 
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END
 
 #endif // OPENIMAGEIO_COLOR_H

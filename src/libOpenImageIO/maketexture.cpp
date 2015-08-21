@@ -577,7 +577,7 @@ write_mipmap (ImageBufAlgo::MakeTextureMode mode,
     }
 
     // OpenEXR always uses border sampling for environment maps
-    bool src_samples_border;
+    bool src_samples_border = false;
     if (envlatlmode && !strcmp(out->format_name(), "openexr")) {
         src_samples_border = true;
         outspec.attribute ("oiio:updirection", "y");
@@ -1179,6 +1179,11 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
         if (prman_metadata)
             dstspec.attribute ("PixarTextureFormat", "Plain Texture");
     }
+    if (prman_metadata) {
+        // Suppress writing of exif directory in the TIFF file to not
+        // confuse the older libtiff that PRMan uses.
+        dstspec.attribute ("tiff:write_exif", 0);
+    }
 
     // FIXME -- should we allow tile sizes to reduce if the image is
     // smaller than the tile size?  And when we do, should we also try
@@ -1511,7 +1516,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
     if (! ok)
         Filesystem::remove (tmpfilename);
 
-    if (verbose || configspec.get_int_attribute("maketx:stats")) {
+    if (verbose || configspec.get_int_attribute("maketx:runstats")
+                || configspec.get_int_attribute("maketx:stats")) {
         double all = alltime();
         outstream << Strutil::format ("maketx run time (seconds): %5.2f\n", all);;
 

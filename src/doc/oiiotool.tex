@@ -211,15 +211,18 @@ the following special names: \qkw{filename}, \qkw{file_extension},
 ``display'' size).
 
 \item[{Arithmetic}] Sub-expressions may be joined by {\cf +}, {\cf -},
-{\cf *}, or {\cf /} for simple arithmetic operations.
+{\cf *}, or {\cf /} for arithmetic operations. Parentheses are supported,
+and standard operator precedence applies.
 \end{description}
 
 To illustrate how this works, consider the following command, which trims
-a two-pixel border from all sides, without needing to know the resolution
-of the original image:
+a four-pixel border from all sides and outputs a new image prefixed with
+"cropped_", without needing to know the resolution or filename of the
+original image:
 
 \begin{smallcode}
-    oiiotool input.exr -cut "{TOP.width-4}x{TOP.height-4}+{TOP.x+2}+{TOP.y+2}" -o cropped.exr
+    oiiotool input.exr -cut "{TOP.width-2*4}x{TOP.height-2*4}+{TOP.x+4}+{TOP.y+4}" \
+        -o cropped_{TOP.filename}
 \end{smallcode}
 
 \section{\oiiotool Tutorial / Recipes}
@@ -577,6 +580,18 @@ and naming it ``Z'' so it will be recognized as a depth channel:
 \end{code}
 
 
+\subsection*{Creating an animated GIF from still images}
+\index{GIF} \index{animated GIF}
+\NEW
+
+\noindent Combine several separate JPEG images into an animated GIF with
+a frame rate of 8 frames per second:
+
+\begin{code}
+    oiiotool foo??.jpg --siappendall --attrib FramesPerSecond 10.0 -o anim.gif
+\end{code}
+
+
 \subsection*{Frame sequences: composite a sequence of images}
 
 \noindent Composite foreground images over background images for a
@@ -618,6 +633,20 @@ Verbose status messages --- print out more information about what
 \apiitem{\ce -q}
 Quet mode --- print out less information about what \oiiotool is doing
 (only errors).
+\apiend
+
+\apiitem{\ce -n}
+\NEW % 1.6
+No saved output --- do not save any image files. This is helpful for certain
+kinds of tests, or in combination with {\cf --runstats} or {\cf --debug},
+for getting detailed information about what a command sequence will do and
+what it costs, but without producing any saved output files.
+\apiend
+
+\apiitem{\ce --debug}
+\NEW % 1.6
+Debug mode --- print lots of information about what operations are being
+performed.
 \apiend
 
 \apiitem{\ce --runstats}
@@ -841,6 +870,54 @@ to use if you are using oiiotool to combine images that may have different
 orientations.
 \apiend
 
+\apiitem{\ce --autocc}
+\NEW % 1.6
+
+Turns on automatic color conversion: Every input image file will be
+immediately converted to a scene-referred linear color space, and every file
+written will be first transformed to an appropriate output color space based
+on the filename or type.   Additionally, if the name of an output file
+contains a color space and that color space is associated with a particular
+data format, it will output that data format (akin to {\cf -d}).
+
+The rules for deducing color spaces are as follows, in order of priority:
+
+\begin{enumerate}
+\item[]
+\item If the filename (input or output) contains as a substring the name
+  of a color space from the current OpenColorIO configuration, that will
+  be assumed to be the color space of input data (or be the requested
+  color space for output).
+\item For input files, if the \ImageInput set the \qkw{oiio:ColorSpace}
+  metadata, it will be honored if the filename did not override it.
+\item When outputting to JPEG files, assume that sRGB is the desired
+  output color space (since JPEG requires sRGB), but still this only
+  occurs if the filename does not specify something different.
+\end{enumerate}
+
+\noindent Example:
+
+If the input file \qkw{in_lg10.dpx} is in the \qkw{lg10} color space,
+and you want to read it in, brighten the RGB uniformly by 10\% (in a linear
+space, of course), and then save it as a 16 bit integer TIFF file encoded
+in the {\cf vd16} color space, you could specifiy the conversions
+explicitly:
+
+\begin{code}
+  oiiotool in_lg10.dpx --colorconvert lg10 linear \
+                       --mulc 1.1,1.1,1.1,1.0 -colorconvert linear vd16 \
+                       -d uint16 -o out_vd16.tif
+\end{code}
+
+\noindent or rely on the naming convention matching the OCIO color space
+names and use automatic conversion:
+
+\begin{code}
+  oiiotool --autocc in_lg10.dpx --mulc 1.1 -o out_vd16.tif
+\end{code}
+
+\apiend
+
 \apiitem{\ce --native}
 Normally, all image reads into an \ImageBuf will be performed via an
 underlying \ImageCache. But since an \ImageCache does not support all
@@ -902,6 +979,7 @@ in the least amount of precision lost.
 %\apiend
 
 \apiitem{\ce --scanline}
+\label{sec:oiiotool:scanline}
 Requests that subsequent output files be scanline-oriented, if scanline
 orientation is supported by the output file format.  By default, the
 output file will be scanline if the input is scanline, or tiled if the
@@ -909,6 +987,7 @@ input is tiled.
 \apiend
 
 \apiitem{\ce --tile {\rm \emph{x}} {\rm \emph{y}}}
+\label{sec:oiiotool:tile}
 Requests that subsequent output files be tiled, with the given $x \times y$ 
 tile size, if tiled images are supported by the output format.
 By default, the output file will take on the tiledness and tile size
@@ -1143,12 +1222,25 @@ If the current image has multiple subimages, replace the current image
 with a new image consisting of only the given subimage.
 \apiend
 
-\apiitem{\ce --siappend {\rm \emph{n}}}
-Replaces the two two images on the stack with a new image comprised of the
-subimages of both images appended together.
+\apiitem{\ce --sisplit}
+\NEW % 1.6
+Remove the top image from the stack, split it into its constituent
+subimages, and push them all onto the stack (first to last).
+\apiend
+
+\apiitem{\ce --siappend}
+Replaces the top two images on the stack with a single new image comprised
+of the subimages of both images appended together.
+\apiend
+
+\apiitem{\ce --siappendall}
+\NEW % 1.6
+Replace \emph{all} of the individual images on the stack with a single new
+image comprised of the subimages of all original images appended together.
 \apiend
 
 \apiitem{\ce --ch {\rm \emph{channellist}}}
+\label{sec:oiiotool:ch}
 Replaces the top image with a new image whose channels have been
 reordered as given by the \emph{channellist}.  The {\cf channellist}
 is a comma-separated list of channel designations, each of which may be
@@ -1174,11 +1266,6 @@ Replaces the top two images on the stack with a new image comprised of
 the channels of both images appended together.
 \apiend
 
-\apiitem{\ce --flatten}
-\index{deep images}
-If the top image is ``deep,'' then ``flatten'' it by compositing the depth
-samples in each pixel.
-\apiend
 
 
 \section{\oiiotool commands that adjust the image stack}
@@ -1297,8 +1384,8 @@ An $256 \times 256$ RGB image with a 16-pixel-wide checker pattern.
  \includegraphics[width=1.5in]{figures/gradient4.jpg}
 \end{tabular}
 
-\apiitem{\small oiiotool --pattern noise:type=uniform:max=1 256x256 3 -o colornoise.jpg \\
-oiiotool --pattern noise:type=uniform:max=1:mono=1 256x256 3 -o greynoise.jpg}
+\apiitem{\small oiiotool --pattern noise:type=uniform:min=1:max=1 256x256 3 -o colornoise.jpg \\
+oiiotool --pattern noise:type=uniform:min=0:max=1:mono=1 256x256 3 -o greynoise.jpg}
 \vspace{10pt}
 The first example puts uniform noise independently in 3 channels, while the
 second generates a single greyscale noise and replicates it in all channels.
@@ -1451,6 +1538,38 @@ will have their values divided by the same value.  Alternatively, a series
 of comma-separated constant values (with no spaces!) may be used to specifiy
 a different multiplier for each channel in the image, respectively.
 \apiend
+
+\apiitem{{\ce --mad}}
+\NEW % 1.6
+Replace the \emph{three} top images A, B, and C (C being the top of stack, B
+below it, and A below B), and compute A*B+C, placing the result on the
+stack. Note that \qkw{A B C --mad} is equivalent to \qkw{A B --mul C --add},
+though using {\cf --mad} may be somewhat faster and preserve more precision.
+
+%\noindent Example:
+%\begin{code}
+%    oiiotool tahoe.jpg --mulc 0.2 -o mulc.jpg
+%\end{code}
+%\spc \includegraphics[width=1.5in]{figures/tahoe-small.jpg}
+%\raisebox{40pt}{\large $\rightarrow$}
+%\includegraphics[width=1.5in]{figures/mulc.jpg} \\
+\apiend
+
+
+\apiitem{{\ce --invert}}
+\NEW % 1.6
+Replace the top images with its color inverse. It only inverts the first
+three channels, in order to preserve alpha.
+
+\noindent Example:
+\begin{code}
+   oiiotool tahoe.jpg --inverse -o inverse.jpg
+\end{code}
+\spc \includegraphics[width=1.5in]{figures/tahoe-small.jpg}
+\raisebox{40pt}{\large $\rightarrow$}
+\includegraphics[width=1.5in]{figures/invert.jpg} \\
+\apiend
+
 
 \apiitem{{\ce --absdiff} \\
 {\ce --absdiffc} {\rm \emph{value}} \\
@@ -1850,6 +1969,36 @@ decreasing resolution. \\
 \end{code}
 \apiend
 
+\apiitem{\ce --pixelaspect {\rm \emph{aspect}}}
+\NEW % 1.6
+Replace the current image with a new image that scales up the width or
+height in order to match the requested pixel aspect ratio.  If displayed
+in a manner that honors the PixelAspectRatio, it should look the same,
+but it will have different pixel dimensions than the original. It will
+always be the same or higher resolution, so it does not lose any detail
+present in the original.
+
+As an example, if you have a $512 \times 512$ image with pixel aspect
+ratio 1.0, {\cf --pixelaspect 2.0} will result in a $512 \times 1024$
+image that has \qkw{PixelAspectRatio} metadata set to 2.0.
+
+Optional appended arguments include:
+
+\begin{tabular}{p{10pt} p{1.25in} p{3.5in}}
+ & {\cf filter=}\emph{name} & Filter name. The default is \qkw{lanczos3}. \\
+\end{tabular}
+
+\noindent Examples:
+
+\begin{tinycode}
+  oiiotool mandrill.tif --pixelaspect 2.0 -o widepixels.tif
+\end{tinycode}
+%\spc \includegraphics[width=1.25in]{figures/grid-small.jpg}
+%\raisebox{40pt}{\large $\rightarrow$}
+%\includegraphics[width=1.25in]{figures/rotate45.jpg} \\
+\apiend
+
+
 \apiitem{\ce --rotate {\rm \emph{angle}}}
 Replace the current image with a new image that is rotated by the given
 angle (in degrees). Positive angles mean to rotate counter-clockwise,
@@ -2212,6 +2361,23 @@ identical on different platforms supported by \product.
 
 \section{\oiiotool commands for color management}
 
+Many of the color management commands depend on an installation of
+OpenColorIO ({\cf http://opencolorio.org/}).
+
+If OIIO has been compiled with OpenColorIO support and the environment
+variable {\cf \$OCIO} is set to point to a valid OpenColorIO configuration
+file, you will have access to all the color spaces that are known by that
+OCIO configuration.  Alternately, you can use the {\cf --colorconfig} option
+to explicitly point to a configuration file. If no  valid configuration file
+is found (either in {\cf \$OCIO} or specified by {\cf --colorconfig}) or
+OIIO was not compiled with OCIO support, then the only color space
+transformats available are {\cf linear} to {\cf Rec709} (and vice versa) and
+{\cf linear} to {\cf sRGB} (and vice versa).
+
+If you ask for \oiiotool help ({\cf oiiotool --help}), at the very bottom
+you will see the list of all color spaces, looks, and displays that
+\oiiotool knows about.
+
 \apiitem{\ce --iscolorspace {\rm \emph{colorspace}}}
 Alter the metadata of the current image so that it thinks its pixels
 are in the named color space.  This does not alter the pixels of the
@@ -2219,24 +2385,18 @@ image, it only changes \oiiotool's understanding of what color
 space those those pixels are in.
 \apiend
 
+\apiitem{\ce --colorconfig {\rm \emph{filename}}}
+\NEW % 1.6
+Instruct \oiiotool to read an OCIO configuration from a custom location.
+Without this, the default is to use the {\cf \$OCIO} environment variable
+as a guide for the location of the configuration file.
+\apiend
+
 \apiitem{\ce --colorconvert {\rm \emph{fromspace tospace}}}
 Replace the current image with a new image whose pixels are transformed
 from the named \emph{fromspace} color space into the named
 \emph{tospace} (disregarding any notion it may have previously had 
 about the color space of the current image).  
-
-If OIIO has been compiled with OpenColorIO support and the environment
-variable {\cf \$OCIO} is set to point to a valid OpenColorIO
-configuration file, you will have access to all the color spaces that
-are known by that OCIO configuration.  If {\cf \$OCIO} does not point to
-a valid configuration file or OIIO was not compiled with OCIO support,
-then the only color space transformats available are {\cf linear} to
-{\cf Rec709} (and vice versa) and {\cf linear} to {\cf sRGB} (and vice
-versa).
-
-If you ask for \oiiotool help ({\cf oiiotool --help}), at the very
-bottom you will see the list of all color spaces that \oiiotool knows
-about.
 \apiend
 
 \apiitem{\ce --tocolorspace {\rm \emph{tospace}}}
@@ -2324,3 +2484,89 @@ image starts of as ``unassociated alpha,'' a.k.a.\ ``non-premultipled.''
 \apiend
 
 
+\section{\oiiotool commands for deep images}
+
+A number of \oiiotool operations are designed to work with ``deep'' images.
+These are detailed below. In general, operations not listed in this section
+should not be expected to work with deep images.
+
+\subsection{Commands specific to deep images}
+
+\apiitem{\ce --deepen}
+\index{deep images}
+\NEW  % 1.6
+If the top image is not deep, then turn it into the equivalent ``deep''
+image. Pixels with non-infinite $z$ or with any non-zero color channels will
+get a single depth sample in the resulting deep image. Pixels in the source
+that have 0 in all channels, and either no \qkw{Z} channel or a $z$ value
+indicating an infinite distance, will result in a pixel with no depth
+samples.
+
+\noindent Optional appended arguments include:
+
+\begin{tabular}{p{10pt} p{0.75in} p{3.75in}}
+  & {\cf z=}\emph{val} & The depth to use for deep samples if the source
+    image did not have a \qkw{Z} channel. (The default is {\cf 1.0}.)
+\end{tabular}
+\apiend
+
+\apiitem{\ce --flatten}
+\index{deep images}
+If the top image is ``deep,'' then ``flatten'' it by compositing the depth
+samples in each pixel.
+\apiend
+
+\subsection{General commands that also work for deep images}
+
+\apiitem{\ce --autotrim}
+For subsequent outputs, automatically {\cf --trim} before writing the file.
+\apiend
+
+\apiitem{\ce --ch {\rm \emph{channellist}}}
+Reorder, rename, remove, or add channels to a deep image.
+See Section~\ref{sec:oiiotool:ch}
+\apiend
+
+\apiitem{\ce --crop {\rm \emph{size}}}
+Crop (adjust the pixel data window), removing pixels or adding empty pixels
+as needed.
+\apiend
+
+\apiitem{\ce --diff}
+Report on the difference of the top two images.
+\apiend
+
+\apiitem{\ce --dumpdata}
+Print to the console detailed information about the values in every pixel.
+
+\noindent Optional appended arguments include:
+
+\begin{tabular}{p{10pt} p{0.75in} p{3.75in}}
+  & {\cf empty=}{\verb&0|1&} & If 0, will cause deep images to skip printing
+                            of information about pixels with no samples.
+\end{tabular}
+\apiend
+
+\apiitem{\ce --info}
+Prints information about each input image as it is read.
+\apiend
+
+\apiitem{\ce --trim}
+Replace the current image with a new image that is cropped to contain the
+minimal rectangular ROI that contains all of the non-empty pixels of
+the original image.
+\apiend
+
+\apiitem{\ce --scanline \\
+\ce --tile {\rm \emph{x}} {\rm \emph{y}}}
+Convert to scanline or to tiled representations upon output.
+\apiend
+
+\apiitem{\ce --stats}
+Prints detailed statistical information about each input image as it is
+read.
+\apiend
+
+
+
+\chapwidthend

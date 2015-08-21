@@ -33,11 +33,13 @@
 #include <cstdio>
 #include <algorithm>
 
+
 extern "C" {
 #define XMD_H
 #include "jpeglib.h"
 #undef XMD_H
 }
+
 
 #include "OpenImageIO/imageio.h"
 #include "OpenImageIO/filesystem.h"

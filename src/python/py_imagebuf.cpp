@@ -307,9 +307,7 @@ ImageBuf_get_pixels (const ImageBuf &buf, TypeDesc format, ROI roi=ROI::All())
 
     size_t size = (size_t) roi.npixels() * roi.nchannels() * format.size();
     boost::scoped_array<char> data (new char [size]);
-    if (! buf.get_pixel_channels (roi.xbegin, roi.xend, roi.ybegin, roi.yend,
-                                  roi.zbegin, roi.zend, roi.chbegin, roi.chend,
-                                  format, &data[0])) {
+    if (! buf.get_pixels (roi, format, &data[0])) {
         return object(handle<>(Py_None));
     }
 
@@ -328,6 +326,53 @@ ImageBuf_get_pixels_bt (const ImageBuf &buf, TypeDesc::BASETYPE format,
 
 BOOST_PYTHON_FUNCTION_OVERLOADS(ImageBuf_get_pixels_bt_overloads,
                                 ImageBuf_get_pixels_bt, 2, 3)
+
+
+bool
+ImageBuf_set_pixels_tuple (ImageBuf &buf, ROI roi, tuple data)
+{
+    if (! roi.defined())
+        roi = buf.roi();
+    roi.chend = std::min (roi.chend, buf.nchannels()+1);
+    size_t size = (size_t) roi.npixels() * roi.nchannels();
+    if (size == 0)
+        return true;   // done
+    std::vector<float> vals;
+    py_to_stdvector (vals, data);
+    if (size > vals.size())
+        return false;   // Not enough data to fill our ROI
+    buf.set_pixels (roi, TypeDesc::TypeFloat, &vals[0]);
+    return true;
+}
+
+
+bool
+ImageBuf_set_pixels_array (ImageBuf &buf, ROI roi, numeric::array data)
+{
+    if (! roi.defined())
+        roi = buf.roi();
+    roi.chend = std::min (roi.chend, buf.nchannels()+1);
+    size_t size = (size_t) roi.npixels() * roi.nchannels();
+    if (size == 0)
+        return true;   // done
+
+    TypeDesc type;
+    size_t pylen = 0;
+    const void *addr = python_array_address (data, type, pylen);
+    if (!addr || size > pylen)
+        return false;   // Not enough data to fill our ROI
+
+    buf.set_pixels (roi, type, addr);
+    return true;
+}
+
+
+
+DeepData&
+ImageBuf_deepdataref (ImageBuf *ib)
+{
+    return *ib->deepdata();
+}
 
 
 
@@ -408,7 +453,6 @@ void declare_imagebuf()
 
         .add_property("pixels_valid", &ImageBuf::pixels_valid)
         .add_property("pixeltype", &ImageBuf::pixeltype)
-        .add_property("deep", &ImageBuf::deep)
         .add_property("has_error",   &ImageBuf::has_error)
         .def("geterror",    &ImageBuf::geterror)
 
@@ -439,6 +483,20 @@ void declare_imagebuf()
         .def("setpixel", &ImageBuf_setpixel1)
         .def("get_pixels", &ImageBuf_get_pixels, ImageBuf_get_pixels_overloads())
         .def("get_pixels", &ImageBuf_get_pixels_bt, ImageBuf_get_pixels_bt_overloads())
+        .def("set_pixels", &ImageBuf_set_pixels_tuple)
+        .def("set_pixels", &ImageBuf_set_pixels_array)
+
+        .add_property("deep", &ImageBuf::deep)
+        .def("deep_samples", &ImageBuf::deep_samples,
+             (arg("x"), arg("y"), arg("z")=0))
+        .def("set_deep_samples", &ImageBuf::set_deep_samples)
+        .def("deep_value", &ImageBuf::deep_value)
+        .def("deep_value_uint", &ImageBuf::deep_value_uint)
+        .def("set_deep_value", &ImageBuf::set_deep_value)
+        .def("set_deep_value_uint", &ImageBuf::set_deep_value_uint)
+        .def("deep_alloc", &ImageBuf::deep_alloc)
+        .def("deepdata", &ImageBuf_deepdataref,
+             return_value_policy<reference_existing_object>())
 
         // FIXME -- do we want to provide pixel iterators?
     ;

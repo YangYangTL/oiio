@@ -60,8 +60,7 @@
 #include "typedesc.h"   /* Needed for TypeDesc definition */
 #include "paramlist.h"
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
 
 /// Type we use for stride lengths.  This is only used to designate
 /// pixel, scanline, tile, or image plane sizes in user-allocated memory,
@@ -376,7 +375,8 @@ public:
 
     /// Return teh channelformat of the given channel.
     TypeDesc channelformat (int chan) const {
-        return chan >= (int)channelformats.size() ? format : channelformats[chan];
+        return chan >= 0 && chan < (int)channelformats.size()
+            ? channelformats[chan] : format;
     }
 
     /// Fill in an array of channel formats describing all channels in
@@ -401,29 +401,64 @@ public:
     std::vector<void *> pointers;    // for each channel per pixel [z][y][x][c]
     std::vector<char> data;          // for each sample [z][y][x][c][s]
 
+    /// Construct an empty DeepData.
     DeepData () : npixels(0), nchannels(0) { }
-    /// Initialize size and allocate nsamples, pointers. It is important to
-    /// completely fill in nsamples after init() but before alling alloc().
-    void init (int npix, int nchan,
-               const TypeDesc *chbegin, const TypeDesc *chend);
-    /// After nsamples[] has been filled in, allocate enough scratch space
-    /// for data and set up all the pointers.
-    void alloc ();
+
+    /// Construct and init from an ImageSpec.
+    DeepData (const ImageSpec &spec) {init (spec); }
+
     /// Clear the vectors and reset size to 0.
     void clear ();
     /// Deallocate all space in the vectors
     void free ();
-    /// Retrieve the pointer to the first sample of the given pixel and
-    /// channel. Return NULL if there are no samples for that pixel.
-    void *channel_ptr (int pixel, int channel) const;
+
+    /// Initialize size and allocate nsamples, pointers. It is important to
+    /// completely fill in nsamples after init() but before alling alloc().
+    /// DEPRECATED
+    void init (int npix, int nchan,
+               const TypeDesc *chbegin, const TypeDesc *chend);
+
+    /// Initialize size and allocate nsamples, pointers based on the number
+    /// of pixels, channels, and channel types in the ImageSpec. It is
+    /// important to completely fill in nsamples after init() but before
+    /// alling alloc().
+    void init (const ImageSpec &spec);
+
+    /// Retrieve the total number of pixels.
+    int pixels () const { return npixels; }
+    /// Retrieve the number of channels.
+    int channels () const { return nchannels; }
+    /// Retrieve the channel type of channel c.
+    TypeDesc channeltype (int c) const { return channeltypes[c]; }
+
+    /// Retrieve the number of samples for the given pixel index.
+    int samples (int pixel) const;
+
+    /// Set the number of samples for the given pixel. This must be called
+    /// after init(), but before alloc().
+    void set_samples (int pixel, int samps);
+
+    /// After set_samples() has been set for all pixels, call alloc() to
+    /// allocate enough scratch space for data and set up all the pointers.
+    void alloc ();
+
     /// Retrieve deep sample value within a pixel, cast to a float.
     float deep_value (int pixel, int channel, int sample) const;
     /// Retrieve deep sample value within a pixel, as an untigned int.
     uint32_t deep_value_uint (int pixel, int channel, int sample) const;
+
     /// Set deep sample value within a pixel, as a float.
+    /// It will automatically call alloc() if it has not yet been called.
     void set_deep_value (int pixel, int channel, int sample, float value);
     /// Set deep sample value within a pixel, as a uint32.
-    void set_deep_value_uint (int pixel, int channel, int sample, uint32_t value);
+    /// It will automatically call alloc() if it has not yet been called.
+    void set_deep_value (int pixel, int channel, int sample, uint32_t value);
+
+    /// Retrieve the pointer to the first sample of the given pixel and
+    /// channel. Return NULL if there are no samples for that pixel.
+    /// Use with care.
+    void *channel_ptr (int pixel, int channel);
+    const void *channel_ptr (int pixel, int channel) const;
 };
 
 
@@ -491,6 +526,8 @@ public:
     ///                        arbitrary names and types?
     ///    "exif"           Can this format store Exif camera data?
     ///    "iptc"           Can this format store IPTC data?
+    ///    "procedural"     Can this format create images without reading
+    ///                        from a disk file?
     ///
     /// Note that main advantage of this approach, versus having
     /// separate individual supports_foo() methods, is that this allows
@@ -816,7 +853,6 @@ public:
     /// the caller, who is responsible for deleting it when done with it.
     typedef ImageInput* (*Creator)();
 
-protected:
     /// Error reporting for the plugin implementation: call this with
     /// printf-like arguments.  Note however that this is fully typesafe!
     // void error (const char *format, ...) const;
@@ -1138,13 +1174,13 @@ public:
     /// the caller, who is responsible for deleting it when done with it.
     typedef ImageOutput* (*Creator)();
 
-protected:
     /// Error reporting for the plugin implementation: call this with
     /// printf-like arguments.  Note however that this is fully typesafe!
     /// void error (const char *format, ...)
     TINYFORMAT_WRAP_FORMAT (void, error, const,
         std::ostringstream msg;, msg, append_error(msg.str());)
 
+protected:
     /// Helper routines used by write_* implementations: convert data (in
     /// the given format and stride) to the "native" format of the file
     /// (described by the 'spec' member variable), in contiguous order. This
@@ -1177,11 +1213,28 @@ protected:
                                      std::vector<unsigned char> &scratch,
                                      unsigned int dither=0,
                                      int xorigin=0, int yorigin=0, int zorigin=0);
-    /// Helper function to copy a tile of data into an image-sized buffer.
+
+    /// Helper function to copy a rectangle of data into the right spot in
+    /// an image-sized buffer. In addition to copying to the right place,
+    /// this handles data format conversion and dither (if the spec's
+    /// "oiio:dither" is nonzero, and if it's converting from a float-like
+    /// type to UINT8). The buf_format describes the type of image_buffer,
+    /// if it's TypeDesc::UNKNOWN it will be assumed to be spec.format.
+    bool copy_to_image_buffer (int xbegin, int xend, int ybegin, int yend,
+                               int zbegin, int zend, TypeDesc format,
+                               const void *data, stride_t xstride,
+                               stride_t ystride, stride_t zstride,
+                               void *image_buffer,
+                               TypeDesc buf_format = TypeDesc::UNKNOWN);
+    /// Helper function to copy a tile of data into the right spot in an
+    /// image-sized buffer. This is really just a wrapper for
+    /// copy_to_image_buffer, passing all the right parameters to copy
+    /// exactly one tile.
     bool copy_tile_to_image_buffer (int x, int y, int z, TypeDesc format,
                                     const void *data, stride_t xstride,
                                     stride_t ystride, stride_t zstride,
-                                    void *image_buffer);
+                                    void *image_buffer,
+                                    TypeDesc buf_format = TypeDesc::UNKNOWN);
 
 protected:
     ImageSpec m_spec;           ///< format spec of the currently open image
@@ -1323,7 +1376,8 @@ OIIO_API bool parallel_convert_image (
 /// Add random [-theramplitude,ditheramplitude] dither to the color channels
 /// of the image.  Dither will not be added to the alpha or z channel.  The
 /// image origin and dither seed values allow a reproducible (or variable)
-/// dither pattern.
+/// dither pattern.  If the strides are set to AutoStride, they will be
+/// assumed to be contiguous floats in data of the given dimensions.
 OIIO_API void add_dither (int nchannels, int width, int height, int depth,
                           float *data,
                           stride_t xstride, stride_t ystride, stride_t zstride,
@@ -1423,7 +1477,6 @@ typedef bool (*wrap_impl) (int &coord, int origin, int width);
 // to force correct linkage on some systems
 OIIO_API void _ImageIO_force_link ();
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END
 
 #endif  // OPENIMAGEIO_IMAGEIO_H

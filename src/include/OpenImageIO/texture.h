@@ -43,8 +43,7 @@
 
 #include <OpenEXR/ImathVec.h>       /* because we need V3f */
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
 
 // Forward declaration
 namespace pvt {
@@ -299,8 +298,8 @@ public:
     /// freed by passing it to TextureSystem::destroy()!
     ///
     /// If shared==true, it's intended to be shared with other like-minded
-    /// owners in the same process who also ask for a shared cache.  If
-    /// false, a private image cache will be created.
+    /// owners in the same process who also ask for a shared texture system.
+    /// If false, a private texture system and cache will be created.
     static TextureSystem *create (bool shared=true);
 
     /// Destroy a TextureSystem that was created using
@@ -682,7 +681,6 @@ private:
 };
 
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END
 
 #endif // OPENIMAGEIO_TEXTURE_H

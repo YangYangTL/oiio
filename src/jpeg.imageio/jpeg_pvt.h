@@ -39,6 +39,11 @@
 
 #include <csetjmp>
 
+#ifdef WIN32
+#undef FAR
+#define XMD_H
+#endif
+
 extern "C" {
 #define XMD_H
 #include "jpeglib.h"
@@ -71,7 +76,7 @@ class JpgInput : public ImageInput {
     JpgInput () { init(); }
     virtual ~JpgInput () { close(); }
     virtual const char * format_name (void) const { return "jpeg"; }
-    virtual int supports (string_view feature) {
+    virtual int supports (string_view feature) const {
         return (feature == "exif"
              || feature == "iptc");
     }

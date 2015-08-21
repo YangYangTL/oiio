@@ -52,7 +52,7 @@
 #endif
 
 
-OIIO_NAMESPACE_ENTER {
+OIIO_NAMESPACE_BEGIN
 
 
 template<typename T>
@@ -404,7 +404,7 @@ static mutex ft_mutex;
 static FT_Library ft_library = NULL;
 static bool ft_broken = false;
 static const char * default_font_name[] = {
-        "cour", "Courier New", "FreeMono", NULL
+        "DroidSans", "cour", "Courier New", "FreeMono", NULL
      };
 } // anon namespace
 #endif
@@ -449,14 +449,24 @@ ImageBufAlgo::render_text (ImageBuf &R, int x, int y, string_view text,
         search_dirs.push_back (h + "/Library/Fonts");
     }
     const char *systemRoot = getenv ("SystemRoot");
-    if (systemRoot && *systemRoot) {
-        std::string sysroot (systemRoot);
-        search_dirs.push_back (sysroot + "/Fonts");
-    }
+    if (systemRoot && *systemRoot)
+        search_dirs.push_back (std::string(systemRoot) + "/Fonts");
     search_dirs.push_back ("/usr/share/fonts");
     search_dirs.push_back ("/Library/Fonts");
     search_dirs.push_back ("C:/Windows/Fonts");
+    search_dirs.push_back ("/usr/local/share/fonts");
     search_dirs.push_back ("/opt/local/share/fonts");
+    // Try $OPENIMAGEIOHOME/fonts
+    const char *oiiohomedir = getenv ("OPENIMAGEIOHOME");
+    if (oiiohomedir && *oiiohomedir)
+        search_dirs.push_back (std::string(oiiohomedir) + "/fonts");
+    // Try ../fonts relative to where this executing binary came from
+    std::string this_program = OIIO::Sysutil::this_program_path ();
+    if (this_program.size()) {
+        std::string path = Filesystem::parent_path (this_program);
+        path = Filesystem::parent_path (path);
+        search_dirs.push_back (path+"/fonts");
+    }
 
     // Try to find the font.  Experiment with several extensions
     std::string font = font_;
@@ -520,9 +530,12 @@ ImageBufAlgo::render_text (ImageBuf &R, int x, int y, string_view text,
         textcolor = localtextcolor;
     }
 
-    for (size_t n = 0, e = text.size();  n < e;  ++n) {
-        // load glyph image into the slot (erase previous one)
-        error = FT_Load_Char (face, text[n], FT_LOAD_RENDER);
+    std::vector<uint32_t> utext;
+    utext.reserve(text.size()); //Possible overcommit, but most text will be ascii
+    Strutil::utf8_to_unicode(text, utext);
+
+    for (size_t n = 0, e = utext.size();  n < e;  ++n) {
+        error = FT_Load_Char (face, utext[n], FT_LOAD_RENDER);
         if (error)
             continue;  // ignore errors
         // now, draw to our target surface
@@ -552,4 +565,4 @@ ImageBufAlgo::render_text (ImageBuf &R, int x, int y, string_view text,
 
 
 
-} OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END

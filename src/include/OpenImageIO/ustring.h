@@ -143,8 +143,7 @@
 #define NULL 0
 #endif
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
 
 class OIIO_API ustring {
 public:
@@ -727,13 +726,15 @@ public:
 /// the pointers themselves, which is safe because once allocated, a
 /// ustring's characters will never be moved. But beware, the resulting
 /// sorting order may vary from run to run!
-class ustringHashIsLess
+class ustringPtrIsLess
 {
 public:
     size_t operator() (ustring a, ustring b) const {
         return size_t(a.data()) < size_t(b.data());
     }
 };
+
+typedef ustringPtrIsLess ustringHashIsLess;   // DEPRECATED
 
 
 
@@ -750,7 +751,6 @@ inline bool iequals (const std::string &a, ustring b) {
 }
 
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END
 
 #endif // OPENIMAGEIO_USTRING_H

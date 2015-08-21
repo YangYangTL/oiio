@@ -54,8 +54,7 @@ struct IplImage;  // Forward declaration; used by Intel Image lib & OpenCV
 
 
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
 
 class Filter2D;  // forward declaration
 
@@ -246,6 +245,37 @@ bool OIIO_API channel_append (ImageBuf &dst, const ImageBuf &A,
                               int nthreads=0);
 
 
+/// Set dst to the "deep" version of "flat" input src. Turning a flat
+/// image into a deep one means:
+///
+/// If the src image has a "Z" channel: if the source pixel's Z channel
+/// value is not infinite, the corresponding pixel of dst will get a single
+/// depth sample that copies the data from the soruce pixel; otherwise, dst
+/// will get an empty pixel. In other words, infinitely far pixels will not
+/// turn into deep samples.
+///
+/// If the src image lacks a "Z" channel: if any of the source pixel's
+/// channel values are nonzero, the corresponding pixel of dst will get a
+/// single depth sample that copies the data from the source pixel and uses
+/// the zvalue parameter for the depth; otherwise, if all source channels in
+/// that pixel are zero, the destination pixel will get no depth samples.
+///
+/// If src is already a deep image, it will just copy pixel values from src
+/// to dst. If dst is not already an initialized ImageBuf, it will be sized
+/// to match src (but made deep).
+///
+/// 'roi' specifies the region of dst's pixels which will be computed;
+/// existing pixels outside this range will not be altered.  If not
+/// specified, the default ROI value will be the pixel data window of src.
+///
+/// The nthreads parameter specifies how many threads (potentially) may
+/// be used, but it's not a guarantee.  If nthreads == 0, it will use
+/// the global OIIO attribute "nthreads".  If nthreads == 1, it
+/// guarantees that it will not launch any new threads.
+bool OIIO_API deepen (ImageBuf &dst, const ImageBuf &src, float zvalue = 1.0f,
+                      ROI roi = ROI::All(), int nthreads = 0);
+
+
 /// Set dst to the ``flattened'' composite of deep image src.  That is, it
 /// converts a deep image to a simple flat image by front-to-back
 /// compositing the samples within each pixel.  If src is already a non-
@@ -296,7 +326,8 @@ bool OIIO_API cut (ImageBuf &dst, const ImageBuf &src,
 /// Copy into dst, beginning at (xbegin,ybegin,zbegin), the pixels of
 /// src described by srcroi.  If srcroi is ROI::All(), the entirety of src
 /// will be used.  It will copy into channels [chbegin...], as many
-/// channels as are described by srcroi.
+/// channels as are described by srcroi. Pixels or channels of dst outside
+/// the range of roi will not be altered.
 ///
 /// The nthreads parameter specifies how many threads (potentially) may
 /// be used, but it's not a guarantee.  If nthreads == 0, it will use
@@ -751,6 +782,64 @@ bool OIIO_API div (ImageBuf &dst, const ImageBuf &A, float B,
 
 
 /// For all pixels and channels of dst within region roi (defaulting to
+/// all the defined pixels of dst), set dst = A * B + C.  This is equivalent
+/// to the sequence { mul(tmp,A,B); add(dst,tmp,C); }, but is likely to be
+/// more efficient and not require a temporary ImageBuf.
+/// It is permitted for any of dst, A, B, or C to be the same image.
+///
+/// A is always an ImageBuf. B and C may either both be ImageBuf or both be
+/// arrays of floats (one per channel, for each channel of A),
+/// or both be a single float (same value for all channels).
+///
+/// If roi is not initialized, it will be set to the union of the pixel
+/// regions of A and B.  If dst is not initialized, it will be sized based
+/// on roi. If dst is initialized, it also must have the same number of
+/// channels as A.
+///
+/// The nthreads parameter specifies how many threads (potentially) may
+/// be used, but it's not a guarantee.  If nthreads == 0, it will use
+/// the global OIIO attribute "nthreads".  If nthreads == 1, it
+/// guarantees that it will not launch any new threads.
+///
+/// Return true on success, false on error (with an appropriate error
+/// message set in dst).
+bool OIIO_API mad (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
+                   const ImageBuf &C, ROI roi=ROI::All(), int nthreads=0);
+bool OIIO_API mad (ImageBuf &dst, const ImageBuf &A, const float *B,
+                   const float *C, ROI roi=ROI::All(), int nthreads=0);
+bool OIIO_API mad (ImageBuf &dst, const ImageBuf &A, float B,
+                   float C, ROI roi=ROI::All(), int nthreads=0);
+inline bool OIIO_API mad (ImageBuf &dst, float A, const ImageBuf &B,
+                   float C, ROI roi=ROI::All(), int nthreads=0) {
+    return mad (dst, B, A, C, roi, nthreads);
+}
+
+
+/// For all pixels and channels within the designated ROI, compute
+/// dst = 1 - A. It is permitted for dst and A to be the same image.
+///
+/// Tips for callers: (1) You probably want to set roi to restrict the
+/// operation to only the color channels, and not accidentally include
+/// alpha, z, or others. (2) There may be situations where you want to
+/// unpremult() before the inverst, then premult() the result, so that you
+/// are computing the inverse of the unmasked color.
+///
+/// If roi is not initialized, it will be set to the pixel data region of A.
+/// If dst is not initialized, it will be sized based on roi. If dst is
+/// initialized, it must have the same number of channels as A.
+///
+/// The nthreads parameter specifies how many threads (potentially) may
+/// be used, but it's not a guarantee.  If nthreads == 0, it will use
+/// the global OIIO attribute "nthreads".  If nthreads == 1, it
+/// guarantees that it will not launch any new threads.
+///
+/// Return true on success, false on error (with an appropriate error
+/// message set in dst).
+bool OIIO_API invert (ImageBuf &dst, const ImageBuf &A,
+                      ROI roi=ROI::All(), int nthreads=0);
+
+
+/// For all pixels and channels of dst within region roi (defaulting to
 /// all the defined pixels of dst), set dst = A ^ b. (raise to power)
 /// B may be either a single float (for all channels), or a float* pointing
 /// to one value per channel of A.
@@ -839,50 +928,12 @@ bool OIIO_API rangeexpand (ImageBuf &dst, const ImageBuf &src,
 bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
                             string_view from, string_view to,
                             bool unpremult=false,
+                            ColorConfig *colorconfig=NULL,
                             ROI roi=ROI::All(), int nthreads=0);
-
-/// Copy pixels within the ROI from src to dst, applying an OpenColorIO
-/// "look" transform. In-place operations (dst == src) are supported.
-///
-/// If dst is not yet initialized, it will be allocated to the same
-/// size as specified by roi.  If roi is not defined it will be all
-/// of dst, if dst is defined, or all of src, if dst is not yet defined.
-///
-/// If unpremult is true, unpremultiply before color conversion, then
-/// premultiply after the color conversion.  You may want to use this
-/// flag if your image contains an alpha channel.
-///
-/// Return true on success, false on error (with an appropriate error
-/// message set in dst).
-bool OIIO_API ociolook (ImageBuf &dst, const ImageBuf &src,
-                        string_view looks, string_view from, string_view to,
-                        bool unpremult=false, bool inverse=false,
-                        string_view key="", string_view value="",
-                        ROI roi=ROI::All(), int nthreads=0);
-
-/// Copy pixels within the ROI from src to dst, applying an OpenColorIO
-/// "display" transform.  If from or looks are NULL, it will not
-/// override the look or source color space (subtly different than
-/// passing "", the empty string, which means to use no look or source
-/// space).
-///
-/// If dst is not yet initialized, it will be allocated to the same
-/// size as specified by roi.  If roi is not defined it will be all
-/// of dst, if dst is defined, or all of src, if dst is not yet defined.
-/// In-place operations (dst == src) are supported.
-///
-/// If unpremult is true, unpremultiply before color conversion, then
-/// premultiply after the color conversion.  You may want to use this
-/// flag if your image contains an alpha channel.
-///
-/// Return true on success, false on error (with an appropriate error
-/// message set in dst).
-bool OIIO_API ociodisplay (ImageBuf &dst, const ImageBuf &src,
-                        string_view display, string_view view,
-                        string_view from="", string_view looks="",
-                        bool unpremult=false,
-                        string_view key="", string_view value="",
-                        ROI roi=ROI::All(), int nthreads=0);
+// DEPRECATED (1.6)
+bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
+                            string_view from, string_view to,
+                            bool unpremult, ROI roi, int nthreads=0);
 
 /// Copy pixels within the ROI from src to dst, applying a color transform.
 /// In-place operations (dst == src) are supported.
@@ -911,6 +962,64 @@ bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
 /// flag if your image contains an alpha channel.
 bool OIIO_API colorconvert (float *color, int nchannels,
                             const ColorProcessor *processor, bool unpremult);
+
+
+/// Copy pixels within the ROI from src to dst, applying an OpenColorIO
+/// "look" transform. In-place operations (dst == src) are supported.
+///
+/// If dst is not yet initialized, it will be allocated to the same
+/// size as specified by roi.  If roi is not defined it will be all
+/// of dst, if dst is defined, or all of src, if dst is not yet defined.
+///
+/// If unpremult is true, unpremultiply before color conversion, then
+/// premultiply after the color conversion.  You may want to use this
+/// flag if your image contains an alpha channel.
+///
+/// Return true on success, false on error (with an appropriate error
+/// message set in dst).
+bool OIIO_API ociolook (ImageBuf &dst, const ImageBuf &src,
+                        string_view looks, string_view from, string_view to,
+                        bool unpremult=false, bool inverse=false,
+                        string_view key="", string_view value="",
+                        ColorConfig *colorconfig=NULL,
+                        ROI roi=ROI::All(), int nthreads=0);
+// DEPRECATED (1.6)
+bool OIIO_API ociolook (ImageBuf &dst, const ImageBuf &src,
+                        string_view looks, string_view from, string_view to,
+                        bool unpremult, bool inverse,
+                        string_view key, string_view value,
+                        ROI roi, int nthreads=0);
+
+/// Copy pixels within the ROI from src to dst, applying an OpenColorIO
+/// "display" transform.  If from or looks are NULL, it will not
+/// override the look or source color space (subtly different than
+/// passing "", the empty string, which means to use no look or source
+/// space).
+///
+/// If dst is not yet initialized, it will be allocated to the same
+/// size as specified by roi.  If roi is not defined it will be all
+/// of dst, if dst is defined, or all of src, if dst is not yet defined.
+/// In-place operations (dst == src) are supported.
+///
+/// If unpremult is true, unpremultiply before color conversion, then
+/// premultiply after the color conversion.  You may want to use this
+/// flag if your image contains an alpha channel.
+///
+/// Return true on success, false on error (with an appropriate error
+/// message set in dst).
+bool OIIO_API ociodisplay (ImageBuf &dst, const ImageBuf &src,
+                        string_view display, string_view view,
+                        string_view from="", string_view looks="",
+                        bool unpremult=false,
+                        string_view key="", string_view value="",
+                        ColorConfig *colorconfig=NULL,
+                        ROI roi=ROI::All(), int nthreads=0);
+// DEPRECATED (1.6)
+bool OIIO_API ociodisplay (ImageBuf &dst, const ImageBuf &src,
+                        string_view display, string_view view,
+                        string_view from, string_view looks,
+                        bool unpremult, string_view key, string_view value,
+                        ROI roi, int nthreads=0);
 
 
 /// Copy pixels from dst to src, and in the process divide all color
@@ -1127,6 +1236,10 @@ bool OIIO_API color_range_check (const ImageBuf &src,
 /// values.  In other words, gives the region that is a "shrink-wraps"
 /// of src to exclude black border pixels.  Note that if the entire
 /// image was black, the ROI returned will contain no pixels.
+///
+/// For "deep" images, this function returns the smallest ROI that contains
+/// all pixels that contain depth samples, and excludes the border pixels
+/// that contain no depth samples at all.
 ///
 /// The nthreads parameter specifies how many threads (potentially) may
 /// be used, but it's not a guarantee.  If nthreads == 0, it will use
@@ -1613,15 +1726,15 @@ bool OIIO_API zover (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
 
 
 
-/// Render a text string into image dst, essentially doing an "over" of
-/// the character into the existing pixel data.  The baseline of the
-/// first character will start at position (x,y).  The font is given by
-/// fontname as a full pathname to the font file (defaulting to some
-/// reasonable system font if not supplied at all), and with a nominal
-/// height of fontsize (in pixels).  The characters will be drawn in
-/// opaque white (1.0,1.0,...) in all channels, unless textcolor is
-/// supplied (and is expected to point to a float array of length at
-/// least equal to R.spec().nchannels).
+/// Render a text string (encoded as UTF-8) into image dst, essentially
+/// doing an "over" of the character into the existing pixel data.  The
+/// baseline of the first character will start at position (x,y).  The font
+/// is given by fontname as a full pathname to the font file (defaulting to
+/// some reasonable system font if not supplied at all), and with a nominal
+/// height of fontsize (in pixels).  The characters will be drawn in opaque
+/// white (1.0,1.0,...) in all channels, unless textcolor is supplied (and
+/// is expected to point to a float array of length at least equal to
+/// R.spec().nchannels).
 bool OIIO_API render_text (ImageBuf &dst, int x, int y,
                            string_view text,
                            int fontsize=16, string_view fontname="",
@@ -1705,7 +1818,7 @@ enum OIIO_API MakeTextureMode {
 ///    worldtoscreen (matrix) World-to-screen space matrix of the view.
 ///    wrapmodes (string)     Default: "black,black"
 ///    maketx:verbose (int)   How much detail should go to outstream (0).
-///    maketx:stats (int)     If nonzero, print stats to outstream (0).
+///    maketx:runstats (int)  If nonzero, print run stats to outstream (0).
 ///    maketx:resize (int)    If nonzero, resize to power of 2. (0)
 ///    maketx:nomipmap (int)  If nonzero, only output the top MIP level (0).
 ///    maketx:updatemode (int) If nonzero, write new output only if the
@@ -1832,7 +1945,6 @@ bool OIIO_API make_texture (MakeTextureMode mode,
 
 }  // end namespace ImageBufAlgo
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END
 
 #endif // OPENIMAGEIO_IMAGEBUFALGO_H

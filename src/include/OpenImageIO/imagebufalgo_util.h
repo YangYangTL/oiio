@@ -35,8 +35,7 @@
 #include "imagebufalgo.h"
 
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
 
 
 
@@ -104,12 +103,17 @@ parallel_image (Func f, ROI roi, int nthreads=0)
 /// If all is ok, return true.  Some additional checks and behaviors may be
 /// specified by the 'prepflags', which is a bit field defined by
 /// IBAprep_flags.
-bool OIIO_API IBAprep (ROI &roi, ImageBuf *dst,
-                       const ImageBuf *A=NULL, const ImageBuf *B=NULL,
+bool OIIO_API IBAprep (ROI &roi, ImageBuf *dst, const ImageBuf *A=NULL,
+                       const ImageBuf *B=NULL, const ImageBuf *C=NULL,
                        ImageSpec *force_spec=NULL, int prepflags=0);
+inline bool IBAprep (ROI &roi, ImageBuf *dst, const ImageBuf *A,
+                     const ImageBuf *B, ImageSpec *force_spec,
+                     int prepflags=0) {
+    return IBAprep (roi, dst, A, B, NULL, force_spec, prepflags);
+}
 inline bool IBAprep (ROI &roi, ImageBuf *dst,
                      const ImageBuf *A, int prepflags) {
-    return IBAprep (roi, dst, A, NULL, NULL, prepflags);
+    return IBAprep (roi, dst, A, NULL, NULL, NULL, prepflags);
 }
 
 enum IBAprep_flags {
@@ -121,8 +125,30 @@ enum IBAprep_flags {
     IBAprep_NO_SUPPORT_VOLUME = 16,     // Don't know how to do volumes
     IBAprep_NO_COPY_METADATA = 256,     // N.B. default copies all metadata
     IBAprep_COPY_ALL_METADATA = 512,    // Even unsafe things
-    IBAprep_CLAMP_MUTUAL_NCHANNELS = 1024 // Clamp roi.chend to max of inputs
+    IBAprep_CLAMP_MUTUAL_NCHANNELS = 1<<10, // Clamp roi.chend to max of inputs
+    IBAprep_SUPPORT_DEEP = 1<<11,
 };
+
+
+
+/// Given data types a and b, return a type that is a best guess for one
+/// that can handle both without any loss of range or precision.
+TypeDesc::BASETYPE OIIO_API type_merge (TypeDesc::BASETYPE a, TypeDesc::BASETYPE b);
+
+inline TypeDesc::BASETYPE
+type_merge (TypeDesc::BASETYPE a, TypeDesc::BASETYPE b, TypeDesc::BASETYPE c)
+{
+    return type_merge (type_merge(a,b), c);
+}
+
+inline TypeDesc type_merge (TypeDesc a, TypeDesc b) {
+    return type_merge (TypeDesc::BASETYPE(a.basetype), TypeDesc::BASETYPE(b.basetype));
+}
+
+inline TypeDesc type_merge (TypeDesc a, TypeDesc b, TypeDesc c)
+{
+    return type_merge (type_merge(a,b), c);
+}
 
 
 
@@ -363,7 +389,6 @@ enum IBAprep_flags {
 }  // end namespace ImageBufAlgo
 
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END
 
 #endif // OPENIMAGEIO_IMAGEBUFALGO_UTIL_H

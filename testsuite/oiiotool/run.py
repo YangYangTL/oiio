@@ -8,6 +8,8 @@ command += oiiotool ("--stats black.tif")
 # test --pattern constant
 command += oiiotool ("--pattern constant:color=.1,.2,.3,1 320x240 4 -o constant.tif")
 command += oiiotool ("--stats constant.tif")
+command += oiiotool ("--pattern constant:color=0.5,0.5,0.5 128x128 3 -d half -o grey128.exr")
+command += oiiotool ("--pattern constant:color=0.5,0.5,0.5 64x64 3 -d half -o grey64.exr")
 
 # test --fill
 command += oiiotool ("--create 256x256 3 --fill:color=1,.5,.5 256x256 --fill:color=0,1,0 80x80+100+100 -d uint8 -o filled.tif")
@@ -27,6 +29,8 @@ command += oiiotool ("filled.tif --rangecheck 0,0,0 1,0.9,1")
 # test --rangecompress & --rangeexpand
 command += oiiotool ("tahoe-small.tif --rangecompress -d uint8 -o rangecompress.tif")
 command += oiiotool ("rangecompress.tif --rangeexpand -d uint8 -o rangeexpand.tif")
+command += oiiotool ("tahoe-small.tif --rangecompress:luma=1 -d uint8 -o rangecompress-luma.tif")
+command += oiiotool ("rangecompress-luma.tif --rangeexpand:luma=1 -d uint8 -o rangeexpand-luma.tif")
 
 # test resample
 command += oiiotool (parent + "/oiio-images/grid.tif --resample 128x128 -o resample.tif")
@@ -43,6 +47,9 @@ command += oiiotool ("resize64.tif --resize 512x512 -o resize512.tif")
 command += oiiotool (parent + "/oiio-images/grid.tif --fit 360x240 -d uint8 -o fit.tif")
 command += oiiotool (parent + "/oiio-images/grid.tif --fit 240x360 -d uint8 -o fit2.tif")
 
+# test --pixelaspect
+command += oiiotool ("tahoe-small.tif -resize 256x192 --pixelaspect 2.0 -d uint8 -o pixelaspect.tif")
+
 # test rotate
 command += oiiotool ("resize.tif --rotate 45 -o rotated.tif")
 command += oiiotool ("resize.tif --rotate:center=50,50 45 -o rotated-offcenter.tif")
@@ -51,45 +58,48 @@ command += oiiotool ("resize.tif --rotate 45 --rotate 90 --rotate 90 --rotate 90
 # test warp
 command += oiiotool ("resize.tif --warp 0.7071068,0.7071068,0,-0.7071068,0.7071068,0,128,-53.01933,1 -o warped.tif")
 
-# test --mulc
-# First, make a small gray swatch
-command += oiiotool ("--pattern constant:color=0.5,0.5,0.5 128x128 3 -d half -o cmul-input.exr")
-# Test --mulc val (multiply all channels by the same scalar)
-command += oiiotool ("cmul-input.exr --mulc 1.5 -o cmul1.exr")
-# Test --mulc val,val,val... (multiply per-channel scalars)
-command += oiiotool ("cmul-input.exr --mulc 1.5,1,0.5 -o cmul2.exr")
-
-# Test --divc val (divide all channels by the same scalar)
-command += oiiotool ("--pattern constant:color=0.5,0.5,0.5 64x64 3 "
-                     "--divc 2.0 -d half -o divc1.exr")
-# Test --divc val,val,val... (divide per-channel scalars)
-command += oiiotool ("--pattern constant:color=0.5,0.5,0.5 64x64 3 "
-                     "--divc 2.0,1,0.5 -d half -o divc2.exr")
-# Test --div of images
-command += oiiotool ("--pattern constant:color=0.5,0.5,0.5 64x64 3 "
-                     "--pattern constant:color=2.0,1,0.5 64x64 3 "
-                     "--div -d half -o div.exr")
-
-# Test --addc val (add to all channels the same scalar)
-command += oiiotool ("cmul-input.exr --addc 0.25 -o cadd1.exr")
-# Test --addc val,val,val... (add per-channel scalars)
-command += oiiotool ("cmul-input.exr --addc 0,0.25,-0.25 -o cadd2.exr")
-
-# Test --powc val (raise all channels by the same power)
-command += oiiotool ("cmul-input.exr --powc 2 -o cpow1.exr")
-# Test --powc val,val,val... (per-channel powers)
-command += oiiotool ("cmul-input.exr --powc 2,2,1 -o cpow2.exr")
-
 # Test --add
 command += oiiotool ("--pattern constant:color=.1,.2,.3 64x64+0+0 3 "
             + " --pattern constant:color=.1,.1,.1 64x64+20+20 3 "
             + " --add -d half -o add.exr")
+# Test --addc val (add to all channels the same scalar)
+command += oiiotool ("grey128.exr --addc 0.25 -o cadd1.exr")
+# Test --addc val,val,val... (add per-channel scalars)
+command += oiiotool ("grey128.exr --addc 0,0.25,-0.25 -o cadd2.exr")
+
 # Test --sub, subc
 command += oiiotool ("--pattern constant:color=.1,.2,.3 64x64+0+0 3 "
             + " --pattern constant:color=.1,.1,.1 64x64+20+20 3 "
             + " --sub -d half -o sub.exr")
 command += oiiotool ("--pattern constant:color=.1,.2,.3 64x64+0+0 3 "
             + " --subc 0.1,0.1,0.1 -d half -o subc.exr")
+
+# test --mul of images
+command += oiiotool ("grey64.exr -pattern constant:color=1.5,1,0.5 64x64 3 --mul -o mul.exr")
+# Test --mulc val (multiply all channels by the same scalar)
+command += oiiotool ("grey128.exr --mulc 1.5 -o cmul1.exr")
+# Test --mulc val,val,val... (multiply per-channel scalars)
+command += oiiotool ("grey128.exr --mulc 1.5,1,0.5 -o cmul2.exr")
+
+# Test --divc val (divide all channels by the same scalar)
+command += oiiotool ("grey64.exr --divc 2.0 -d half -o divc1.exr")
+# Test --divc val,val,val... (divide per-channel scalars)
+command += oiiotool ("grey64.exr --divc 2.0,1,0.5 -d half -o divc2.exr")
+# Test --div of images
+command += oiiotool ("grey64.exr --pattern constant:color=2.0,1,0.5 64x64 3 "
+                   + "--div -d half -o div.exr")
+
+# test --mad of images
+command += oiiotool ("grey64.exr -pattern constant:color=1.5,1,0.5 64x64 3 "
+                   + "-pattern constant:color=.1,.1,.1 64x64 3 --mad -o mad.exr")
+
+# test --invert
+command += oiiotool ("tahoe-small.tif --invert -o invert.tif")
+
+# Test --powc val (raise all channels by the same power)
+command += oiiotool ("grey128.exr --powc 2 -o cpow1.exr")
+# Test --powc val,val,val... (per-channel powers)
+command += oiiotool ("grey128.exr --powc 2,2,1 -o cpow2.exr")
 
 # Test --abs, --absdiff, --absdiffc
 # First, make a test image that's 0.5 on the left, -0.5 on the right
@@ -224,13 +234,13 @@ command += oiiotool ("tahoe-small.tif --unsharp -d uint8 -o unsharp.tif")
 command += oiiotool ("tahoe-small.tif --unsharp:kernel=median -d uint8 -o unsharp-median.tif")
 
 # test fft, ifft
-command += oiiotool ("tahoe-small.tif --ch 2 --fft -o fft.exr")
-command += oiiotool ("fft.exr --ifft --ch 0,0,0 -o ifft.exr")
+command += oiiotool ("tahoe-tiny.tif --ch 2 --fft -d float -o fft.exr")
+command += oiiotool ("fft.exr --ifft --ch 0,0,0 -d float -o ifft.exr")
 
 # test --polar, --unpolar
 # note that fft.exr that we built above is in complex form
-command += oiiotool ("fft.exr --polar -d half -o polar.exr")
-command += oiiotool ("polar.exr --unpolar -d half -o unpolar.exr")
+command += oiiotool ("fft.exr --polar -d float -o polar.exr")
+command += oiiotool ("polar.exr --unpolar -d float -o unpolar.exr")
 
 # test labels
 command += oiiotool (
@@ -241,6 +251,18 @@ command += oiiotool (
             " R G --add -d half -o labeladd.exr")
 
 
+# test subimages
+command += oiiotool ("--pattern constant:color=0.5,0.0,0.0 64x64 3 " +
+                     "--pattern constant:color=0.0,0.5,0.0 64x64 3 " +
+                     "--siappend -d half -o subimages-2.exr")
+command += oiiotool ("--pattern constant:color=0.5,0.0,0.0 64x64 3 " +
+                     "--pattern constant:color=0.0,0.5,0.0 64x64 3 " +
+                     "--pattern constant:color=0.0,0.0,0.5 64x64 3 " +
+                     "--pattern constant:color=0.5,0.5,0.0 64x64 3 " +
+                     "--siappendall -d half -o subimages-4.exr")
+command += oiiotool ("subimages-2.exr --sisplit -o subimage2.exr " +
+                     "--pop -o subimage1.exr")
+
 # test sequences
 command += oiiotool ("fit.tif -o copyA.1-10#.jpg");
 command += oiiotool (" --info  " +  " ".join(["copyA.{0:04}.jpg".format(x) for x in range(1,11)]))
@@ -248,8 +270,8 @@ command += oiiotool (" --info  " +  " ".join(["copyA.{0:04}.jpg".format(x) for x
 # test expression substitution
 command += oiiotool ("tahoe-small.tif --pattern fill:top=0,0,0,0:bottom=0,0,1,1 " +
                      "{TOP.geom} {TOP.nchannels} -d uint8 -o exprgradient.tif")
-command += oiiotool ("tahoe-small.tif -cut {TOP.width-40}x{TOP.height-40}+{TOP.x+20}+{TOP.y+20} -d uint8 -o exprcropped.tif")
-
+command += oiiotool ("tahoe-small.tif -cut '{TOP.width-20* 2}x{TOP.height-40+(4*2- 2 ) /6-1}+{TOP.x+100.5-80.5 }+{TOP.y+20}' -d uint8 -o exprcropped.tif")
+command += oiiotool ("tahoe-small.tif -o exprstrcat{TOP.compression}.tif")
 
 # test --no-autopremult on a TGA file thet needs it.
 command += oiiotool ("--no-autopremult src/rgba.tga --ch R,G,B -o rgbfromtga.png")
@@ -266,6 +288,7 @@ outputs = [
             "resample.tif", "resize.tif", "resize2.tif",
             "resize64.tif", "resize512.tif",
             "fit.tif", "fit2.tif",
+            "pixelaspect.tif",
             "warped.tif",
             "rotated.tif", "rotated-offcenter.tif", "rotated360.tif",
             "histogram_regular.tif", "histogram_cumulative.tif",
@@ -280,16 +303,18 @@ outputs = [
             "cshift.tif",
             "chanshuffle.tif", "ch-rgba.exr", "ch-z.exr",
             "chappend-rgbaz.exr", "chname.exr",
-            "cmul1.exr", "cmul2.exr",
+            "add.exr", "cadd1.exr", "cadd2.exr",
+            "sub.exr", "subc.exr",
+            "mul.exr", "cmul1.exr", "cmul2.exr",
             "div.exr", "divc1.exr", "divc2.exr",
-            "cadd1.exr", "cadd2.exr",
+            "mad.exr", "invert.tif",
             "cpow1.exr", "cpow2.exr",
-            "add.exr", "sub.exr", "subc.exr",
             "abs.exr", "absdiff.exr", "absdiffc.exr",
             "chsum.tif",
             "rgbahalf-zfloat.exr",
             "tahoe-filled.tif",
             "rangecompress.tif", "rangeexpand.tif",
+            "rangecompress-luma.tif", "rangeexpand-luma.tif",
             "grid-clamped.tif",
             "unpremult.exr", "premult.exr",
             "bsplinekernel.exr", "bspline-blur.tif",
@@ -298,8 +323,10 @@ outputs = [
             "fft.exr", "ifft.exr",
             "polar.exr", "unpolar.exr",
             "labeladd.exr",
-            "exprgradient.tif", "exprcropped.tif",
+            "exprgradient.tif", "exprcropped.tif", "exprstrcatlzw.tif",
             "rgbfromtga.png",
+            "subimages-2.exr", "subimages-4.exr",
+            "subimage1.exr", "subimage2.exr",
             "out.txt" ]
 
 #print "Running this command:\n" + command + "\n"

@@ -79,21 +79,17 @@
 ///////////////////////////////////////////////////////////////////////////
 
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
 
 
 bool
-ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst,
-                       const ImageBuf *A, const ImageBuf *B,
+ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst, const ImageBuf *A,
+                       const ImageBuf *B, const ImageBuf *C,
                        ImageSpec *force_spec, int prepflags)
 {
-    if (A && !A->initialized()) {
-        if (dst)
-            dst->error ("Uninitialized input image");
-        return false;
-    }
-    if (B && !B->initialized()) {
+    if ((A && !A->initialized()) ||
+        (B && !B->initialized()) ||
+        (C && !C->initialized())) {
         if (dst)
             dst->error ("Uninitialized input image");
         return false;
@@ -107,6 +103,8 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst,
             maxchans = std::min (maxchans, A->spec().nchannels);
         if (B && B->initialized())
             maxchans = std::min (maxchans, B->spec().nchannels);
+        if (C && C->initialized())
+            maxchans = std::min (maxchans, C->spec().nchannels);
     }
     if (dst->initialized()) {
         // Valid destination image.  Just need to worry about ROI.
@@ -128,11 +126,15 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst,
         ROI full_roi;
         if (! roi.defined()) {
             // No ROI -- make it the union of the pixel regions of the inputs
-            roi = get_roi (A->spec());
-            full_roi = get_roi_full (A->spec());
+            roi = A->roi();
+            full_roi = A->roi_full();
             if (B) {
-                roi = roi_union (roi, get_roi (B->spec()));
-                full_roi = roi_union (full_roi, get_roi_full (B->spec()));
+                roi = roi_union (roi, B->roi());
+                full_roi = roi_union (full_roi, B->roi_full());
+            }
+            if (C) {
+                roi = roi_union (roi, C->roi());
+                full_roi = roi_union (full_roi, C->roi_full());
             }
         } else {
             if (A) {
@@ -150,10 +152,13 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst,
             // If there's an input image, give dst A's spec (with
             // modifications detailed below...)
             spec = force_spec ? (*force_spec) : A->spec();
-            // For two inputs, if they aren't the same data type, punt and
+            // For multiple inputs, if they aren't the same data type, punt and
             // allocate a float buffer. If the user wanted something else,
             // they should have pre-allocated dst with their desired format.
             if (B && A->spec().format != B->spec().format)
+                spec.set_format (TypeDesc::FLOAT);
+            if (C && (A->spec().format != C->spec().format ||
+                      B->spec().format != C->spec().format))
                 spec.set_format (TypeDesc::FLOAT);
             // No good can come from automatically polluting an ImageBuf
             // with some other ImageBuf's tile sizes.
@@ -193,7 +198,8 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst,
     if (prepflags & IBAprep_REQUIRE_ALPHA) {
         if (dst->spec().alpha_channel < 0 ||
               (A && A->spec().alpha_channel < 0) ||
-              (B && B->spec().alpha_channel < 0)) {
+              (B && B->spec().alpha_channel < 0) ||
+              (C && C->spec().alpha_channel < 0)) {
             dst->error ("images must have alpha channels");
             return false;
         }
@@ -201,7 +207,8 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst,
     if (prepflags & IBAprep_REQUIRE_Z) {
         if (dst->spec().z_channel < 0 ||
               (A && A->spec().z_channel < 0) ||
-              (B && B->spec().z_channel < 0)) {
+              (B && B->spec().z_channel < 0) ||
+              (C && C->spec().z_channel < 0)) {
             dst->error ("images must have depth channels");
             return false;
         }
@@ -209,7 +216,8 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst,
     if (prepflags & IBAprep_REQUIRE_SAME_NCHANNELS) {
         int n = dst->spec().nchannels;
         if ((A && A->spec().nchannels != n) ||
-            (B && B->spec().nchannels != n)) {
+            (B && B->spec().nchannels != n) ||
+            (C && C->spec().nchannels != n)) {
             dst->error ("images must have the same number of channels");
             return false;
         }
@@ -217,13 +225,57 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst,
     if (prepflags & IBAprep_NO_SUPPORT_VOLUME) {
         if (dst->spec().depth > 1 ||
                 (A && A->spec().depth > 1) ||
-                (B && B->spec().depth > 1)) {
+                (B && B->spec().depth > 1) ||
+                (C && C->spec().depth > 1)) {
             dst->error ("volumes not supported");
             return false;
         }
     }
+    if (! (prepflags & IBAprep_SUPPORT_DEEP) &&
+        ((dst && dst->deep()) || (A && A->deep()) ||
+         (B && B->deep()) || (C && C->deep()))) {
+        dst->error ("deep data not supported");
+        return false;
+    }
     return true;
 }
+
+
+
+/// Given data types a and b, return a type that is a best guess for one
+/// that can handle both without any loss of range or precision.
+TypeDesc::BASETYPE
+ImageBufAlgo::type_merge (TypeDesc::BASETYPE a, TypeDesc::BASETYPE b)
+{
+    // Same type already? done.
+    if (a == b)
+        return a;
+    if (a == TypeDesc::UNKNOWN)
+        return b;
+    if (b == TypeDesc::UNKNOWN)
+        return a;
+    // Canonicalize so a's size (in bytes) is >= b's size in bytes. This
+    // unclutters remaining cases.
+    if (TypeDesc(a).size() < TypeDesc(b).size())
+        std::swap (a, b);
+    // Double or float trump anything else
+    if (a == TypeDesc::DOUBLE || a == TypeDesc::FLOAT)
+        return a;
+    if (a == TypeDesc::UINT32 && (b == TypeDesc::UINT16 || b == TypeDesc::UINT8))
+        return a;
+    if (a == TypeDesc::INT32 && (b == TypeDesc::INT16 || b == TypeDesc::UINT16 ||
+                                 b == TypeDesc::INT8 || b == TypeDesc::UINT8))
+        return a;
+    if ((a == TypeDesc::UINT16 || a == TypeDesc::HALF) && b == TypeDesc::UINT8)
+        return a;
+    if ((a == TypeDesc::INT16 || a == TypeDesc::HALF) &&
+        (b == TypeDesc::INT8 || b == TypeDesc::UINT8))
+        return a;
+    // Out of common cases. For all remaining edge cases, punt and say that
+    // we prefer float.
+    return TypeDesc::FLOAT;
+}
+
 
 
 
@@ -293,7 +345,7 @@ ImageBufAlgo::convolve (ImageBuf &dst, const ImageBuf &src,
     }
     OIIO_DISPATCH_COMMON_TYPES2 (ok, "convolve", convolve_,
                           dst.spec().format, src.spec().format,
-                          dst, src, kernel, normalize, roi, nthreads);
+                          dst, src, *K, normalize, roi, nthreads);
     return ok;
 }
 
@@ -538,7 +590,11 @@ hfft_ (ImageBuf &dst, const ImageBuf &src, bool inverse, bool unitary,
 {
     ASSERT (dst.spec().format.basetype == TypeDesc::FLOAT &&
             src.spec().format.basetype == TypeDesc::FLOAT &&
-            dst.spec().nchannels == 2 && src.spec().nchannels == 2);
+            dst.spec().nchannels == 2 && src.spec().nchannels == 2 &&
+            dst.roi() == src.roi() &&
+            (dst.storage() == ImageBuf::LOCALBUFFER || dst.storage() == ImageBuf::APPBUFFER) &&
+            (src.storage() == ImageBuf::LOCALBUFFER || src.storage() == ImageBuf::APPBUFFER)
+        );
 
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
@@ -606,7 +662,13 @@ ImageBufAlgo::fft (ImageBuf &dst, const ImageBuf &src,
     dst.reset (dst.name(), spec);
 
     // Copy src to a 2-channel (for "complex") float buffer
-    ImageBuf A (spec);   // zeros it out automatically
+    ImageBuf A (spec);
+    if (src.nchannels() < 2) {
+        // If we're pasting fewer than 2 channels, zero out channel 1.
+        ROI r = roi;
+        r.chbegin = 1; r.chend = 2;
+        zero (A, r);
+    }
     if (! ImageBufAlgo::paste (A, 0, 0, 0, 0, src, roi, nthreads)) {
         dst.error ("%s", A.geterror());
         return false;
@@ -903,5 +965,4 @@ ImageBufAlgo::fillholes_pushpull (ImageBuf &dst, const ImageBuf &src,
 }
 
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END

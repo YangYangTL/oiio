@@ -104,7 +104,7 @@
 #endif
 
 
-OIIO_NAMESPACE_ENTER {
+OIIO_NAMESPACE_BEGIN
 
 #ifdef _WIN32
 // Windows doesn't define these functions from math.h
@@ -165,6 +165,11 @@ cbrtf (float val) {
 	return powf (val, 1.0/3.0);
 }
 
+
+inline float
+rintf (float val) {
+    return val + copysignf(0.5f, val);
+}
 
 #elif _MSC_VER >= 1800 && __cplusplus <= 201103L
 // Prior to c++11, these were implementation defined, and on msvc, were not in the
@@ -285,6 +290,6 @@ log2f (float val) {
 #endif
 
 
-} OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END
 
 

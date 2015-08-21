@@ -55,8 +55,7 @@
 #include "string_view.h"
 
 
-OIIO_NAMESPACE_ENTER
-{
+OIIO_NAMESPACE_BEGIN
 
 /// @namespace Filesystem
 ///
@@ -192,6 +191,10 @@ OIIO_API std::string unique_path (string_view model="%%%%-%%%%-%%%%-%%%%");
 ///
 OIIO_API FILE *fopen (string_view path, string_view mode);
 
+/// Return the current (".") directory path.
+///
+OIIO_API std::string current_path ();
+
 /// Version of std::ifstream.open that can handle UTF-8 paths
 ///
 OIIO_API void open (std::ifstream &stream, string_view path,
@@ -294,7 +297,6 @@ OIIO_API bool scan_for_matching_filenames (const std::string &pattern,
 
 };  // namespace Filesystem
 
-}
-OIIO_NAMESPACE_EXIT
+OIIO_NAMESPACE_END
 
 #endif // OPENIMAGEIO_FILESYSTEM_H

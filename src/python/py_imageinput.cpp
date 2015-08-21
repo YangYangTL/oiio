@@ -147,46 +147,6 @@ bool ImageInputWrap::seek_subimage(int subimage, int miplevel)
 
 
 
-const char *
-python_array_code (TypeDesc format)
-{
-    switch (format.basetype) {
-    case TypeDesc::UINT8 :  return "B";
-    case TypeDesc::INT8 :   return "b";
-    case TypeDesc::UINT16 : return "H";
-    case TypeDesc::INT16 :  return "h";
-    case TypeDesc::UINT32 : return "I";
-    case TypeDesc::INT32 :  return "i";
-    case TypeDesc::FLOAT :  return "f";
-    case TypeDesc::DOUBLE : return "d";
-    default :               return "f";   // Punt -- return float
-    }
-}
-
-
-
-object
-C_array_to_Python_array (const char *data, TypeDesc type, size_t size)
-{
-    // Construct a Python array, convert the buffer we read into a string
-    // and then into the array.
-    object arr_module(handle<>(PyImport_ImportModule("array")));
-    object array = arr_module.attr("array")(python_array_code(type));
-#if PY_MAJOR_VERSION >= 3
-    object string_py(handle<>(PyBytes_FromStringAndSize(data, size)));
-#else
-    object string_py(handle<>(PyString_FromStringAndSize(data, size)));
-#endif
-#if (PY_MAJOR_VERSION < 3) || (PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION < 2)
-    array.attr("fromstring")(string_py);
-#else
-    array.attr("frombytes")(string_py);
-#endif
-    return array;
-}
-
-
-
 // The read_image method is a bit different from the c++ interface. 
 // "function" is a function which takes a float, and the 
 // PyProgressCallback function is called automatically.
@@ -429,6 +389,62 @@ ImageInputWrap_read_tiles_default (ImageInputWrap& in,
 
 
 
+object
+ImageInputWrap::read_native_deep_scanlines (int ybegin, int yend, int z,
+                                            int chbegin, int chend)
+{
+    DeepData* dd = NULL;
+    bool ok = true;
+    {
+        ScopedGILRelease gil;
+        dd = new DeepData;
+        ok = m_input->read_native_deep_scanlines (ybegin, yend, z,
+                                                  chbegin, chend, *dd);
+    }
+    if (ok)
+        return object(dd);
+    delete dd;
+    return object(handle<>(Py_None));
+}
+
+
+object
+ImageInputWrap::read_native_deep_tiles (int xbegin, int xend, int ybegin, int yend,
+                                        int zbegin, int zend, int chbegin, int chend)
+{
+    DeepData* dd = NULL;
+    bool ok = true;
+    {
+        ScopedGILRelease gil;
+        dd = new DeepData;
+        ok = m_input->read_native_deep_tiles (xbegin, xend, ybegin, yend,
+                                              zbegin, zend, chbegin, chend, *dd);
+    }
+    if (ok)
+        return object(dd);
+    delete dd;
+    return object(handle<>(Py_None));
+}
+
+
+object
+ImageInputWrap::read_native_deep_image ()
+{
+    DeepData* dd = NULL;
+    bool ok = true;
+    {
+        ScopedGILRelease gil;
+        dd = new DeepData;
+        ok = m_input->read_native_deep_image (*dd);
+    }
+    if (ok)
+        return object(dd);
+    delete dd;
+    return object(handle<>(Py_None));
+}
+
+
+
 std::string
 ImageInputWrap::geterror() const
 {
@@ -474,7 +490,9 @@ void declare_imageinput()
         .def("read_image",       &ImageInputWrap::read_image)
         .def("read_image",       &ImageInputWrap_read_image_bt)
         .def("read_image",       &ImageInputWrap_read_image_default)
-//FIXME: read_native_deep_{scanlines,tiles,image}
+        .def("read_native_deep_scanlines", &ImageInputWrap::read_native_deep_scanlines)
+        .def("read_native_deep_tiles",     &ImageInputWrap::read_native_deep_tiles)
+        .def("read_native_deep_image",     &ImageInputWrap::read_native_deep_image)
         .def("geterror",         &ImageInputWrap::geterror)
     ;
 }

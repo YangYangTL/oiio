@@ -93,6 +93,11 @@ try:
     ImageBufAlgo.flatten (b, ImageBuf("../oiiotool-deep/src/deepalpha.exr"))
     write (b, "flat.exr")
 
+    # deepen
+    b = ImageBuf()
+    ImageBufAlgo.deepen (b, ImageBuf("../oiiotool-deep/az.exr"))
+    write (b, "deepen.exr")
+
     # crop
     b = ImageBuf()
     ImageBufAlgo.crop (b, grid, oiio.ROI(50,150,200,600))
@@ -204,11 +209,17 @@ try:
     b = ImageBuf()
     ImageBufAlgo.mul (b, gray128, (1.5,1,0.5))
     write (b, "cmul2.exr")
-    # FIXME -- image multiplication; it's not in testsuite/oiiotool either
-    # b = ImageBuf()
-    # ImageBufAlgo.mul (b, make_constimage(64,64,3,oiio.HALF,(.1,.2,.3)),
-    #                        make_constimage(64,64,3,oiio.HALF,(.1,.1,.1),20,20))
-    # write (b, "mul.exr")
+    b = ImageBuf()
+    ImageBufAlgo.mul (b, make_constimage(64,64,3,oiio.HALF,(.5,.5,.5)),
+                         make_constimage(64,64,3,oiio.HALF,(1.5,1,0.5)))
+    write (b, "mul.exr", oiio.HALF)
+
+    # mad
+    b = ImageBuf()
+    ImageBufAlgo.mad (b, make_constimage(64,64,3,oiio.HALF,(.5,.5,.5)),
+                         make_constimage(64,64,3,oiio.HALF,(1.5,1,0.5)),
+                         make_constimage(64,64,3,oiio.HALF,(0.1,0.1,0.1)))
+    write (b, "mad.exr", oiio.HALF)
 
     # div
     b = ImageBuf()
@@ -220,6 +231,12 @@ try:
     b = ImageBuf()
     ImageBufAlgo.div (b, gray64, (2.0,1,0.5))
     write (b, "divc2.exr", oiio.HALF)
+
+    # invert
+    a = ImageBuf ("../oiiotool/tahoe-small.tif")
+    b = ImageBuf()
+    ImageBufAlgo.invert (b, a)
+    write (b, "invert.tif", oiio.UINT8)
 
     # pow
     b = ImageBuf()
@@ -348,15 +365,15 @@ try:
     # fft, ifft
     fft = ImageBuf()
     blue = ImageBuf()
-    ImageBufAlgo.channels (blue, ImageBuf("../oiiotool/tahoe-small.tif"),
+    ImageBufAlgo.channels (blue, ImageBuf("../oiiotool/tahoe-tiny.tif"),
                            (2,))
     ImageBufAlgo.fft (fft, blue)
-    write (fft, "fft.exr", oiio.HALF)
+    write (fft, "fft.exr", oiio.FLOAT)
     inv = ImageBuf()
     ImageBufAlgo.ifft (inv, fft)
     b = ImageBuf()
     ImageBufAlgo.channels (b, inv, (0,0,0))
-    write (b, "ifft.exr", oiio.HALF)
+    write (b, "ifft.exr", oiio.FLOAT)
     inv.clear()
     fft.clear()
 
@@ -365,8 +382,8 @@ try:
     ImageBufAlgo.complex_to_polar (polar, fft)
     b = ImageBuf()
     ImageBufAlgo.polar_to_complex (b, polar)
-    write (polar, "polar.exr", oiio.HALF)
-    write (b, "complex.exr", oiio.HALF)
+    write (polar, "polar.exr", oiio.FLOAT)
+    write (b, "unpolar.exr", oiio.FLOAT)
     fft.clear()
     polar.clear()
 
