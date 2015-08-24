@@ -757,6 +757,9 @@ TIFFInput::readspec (bool read_meta)
     case COMPRESSION_PACKBITS :
         m_spec.attribute ("compression", "packbits");
         break;
+    case COMPRESSION_JPEG:
+        m_spec.attribute("compression", "jpeg");
+        break;
     default:
         break;
     }
