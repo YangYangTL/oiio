@@ -52,15 +52,6 @@ TypeDesc::TypeDesc (string_view typestring)
 
 
 
-TypeDesc::TypeDesc (const char *typestring)
-    : basetype(UNKNOWN), aggregate(SCALAR), vecsemantics(NOXFORM),
-      reserved(0), arraylen(0)
-{
-    fromstring (typestring);
-}
-
-
-
 namespace {
 
 static int basetype_size[] = {
@@ -116,6 +107,33 @@ TypeDesc::is_floating_point () const
     DASSERT (sizeof(isfloat)/sizeof(isfloat[0]) == TypeDesc::LASTBASE);
     DASSERT (basetype < TypeDesc::LASTBASE);
     return isfloat[basetype];
+}
+
+
+
+bool
+TypeDesc::is_signed () const
+{
+    static bool issigned[] = {
+        0, // UNKNOWN
+        0, // VOID
+        0, // UCHAR
+        1, // CHAR
+        0, // USHORT
+        1, // SHORT
+        0, // UINT
+        1, // INT
+        0, // ULONGLONG
+        1, // LONGLONG
+        1, // HALF
+        1, // FLOAT
+        1, // DOUBLE
+        0, // STRING
+        0  // PTR
+    };
+    DASSERT (sizeof(issigned)/sizeof(issigned[0]) == TypeDesc::LASTBASE);
+    DASSERT (basetype < TypeDesc::LASTBASE);
+    return issigned[basetype];
 }
 
 
@@ -177,6 +195,8 @@ TypeDesc::c_str () const
         result = basetype_name[basetype];
     else if (aggregate == MATRIX44 && basetype == FLOAT)
         result = "matrix";
+    else if (aggregate == MATRIX33 && basetype == FLOAT)
+        result = "matrix33";
     else if (aggregate == VEC4 && basetype == FLOAT && vecsemantics == NOXFORM)
         result = "float4";
     else if (vecsemantics == NOXFORM) {
@@ -185,7 +205,8 @@ TypeDesc::c_str () const
         case VEC2 : agg = "vec2"; break;
         case VEC3 : agg = "vec3"; break;
         case VEC4 : agg = "vec4"; break;
-        case MATRIX44 : agg = "matrix44"; break;
+        case MATRIX33 : agg = "matrix33"; break;
+        case MATRIX44 : agg = "matrix"; break;
         }
         result = std::string (agg) + basetype_code[basetype];
     } else {
@@ -202,7 +223,8 @@ TypeDesc::c_str () const
         switch (aggregate) {
         case VEC2 : agg = "2"; break;
         case VEC4 : agg = "4"; break;
-        case MATRIX44 : agg = "matrix"; break;
+        case MATRIX33 : agg = "matrix33"; break;
+        case MATRIX44 : agg = "matrix44"; break;
         }
         result = std::string (vec) + std::string (agg);
         if (basetype != FLOAT)
@@ -241,14 +263,6 @@ copy_until (const char *src, const char *delim, char *dst, size_t maxlen)
 
 
 size_t
-TypeDesc::fromstring (const char *typestring)
-{
-    return fromstring (string_view(typestring));
-}
-
-
-
-size_t
 TypeDesc::fromstring (string_view typestring)
 {
     *this = TypeDesc::UNKNOWN;
@@ -281,8 +295,12 @@ TypeDesc::fromstring (string_view typestring)
         t = TypeVector;
     else if (type == "normal")
         t = TypeNormal;
-    else if (type == "matrix")
-        t = TypeMatrix;
+    else if (type == "matrix33")
+        t = TypeMatrix33;
+    else if (type == "matrix" || type == "matrix44")
+        t = TypeMatrix44;
+    else if (type == "timecode")
+        t = TypeTimeCode;
     else {
         return 0;  // unknown
     }
@@ -409,7 +427,9 @@ const TypeDesc TypeDesc::TypeColor (TypeDesc::FLOAT, TypeDesc::VEC3, TypeDesc::C
 const TypeDesc TypeDesc::TypePoint (TypeDesc::FLOAT, TypeDesc::VEC3, TypeDesc::POINT);
 const TypeDesc TypeDesc::TypeVector (TypeDesc::FLOAT, TypeDesc::VEC3, TypeDesc::VECTOR);
 const TypeDesc TypeDesc::TypeNormal (TypeDesc::FLOAT, TypeDesc::VEC3, TypeDesc::NORMAL);
-const TypeDesc TypeDesc::TypeMatrix (TypeDesc::FLOAT,TypeDesc::MATRIX44);
+const TypeDesc TypeDesc::TypeMatrix33 (TypeDesc::FLOAT,TypeDesc::MATRIX33);
+const TypeDesc TypeDesc::TypeMatrix44 (TypeDesc::FLOAT,TypeDesc::MATRIX44);
+const TypeDesc TypeDesc::TypeMatrix = TypeDesc::TypeMatrix44;
 const TypeDesc TypeDesc::TypeString (TypeDesc::STRING);
 const TypeDesc TypeDesc::TypeInt (TypeDesc::INT);
 const TypeDesc TypeDesc::TypeHalf (TypeDesc::HALF);

@@ -32,13 +32,17 @@
 #include <iostream>
 
 #include <boost/regex.hpp>
-#include <boost/tokenizer.hpp>
 
 #include "OpenImageIO/thread.h"
 #include "OpenImageIO/strutil.h"
 #include "OpenImageIO/fmath.h"
 #include "OpenImageIO/imageio.h"
-#include "OpenImageIO/pugixml.hpp"
+
+#if USE_EXTERNAL_PUGIXML
+# include "pugixml.hpp"
+#else
+# include "OpenImageIO/pugixml.hpp"
+#endif
 
 #define DEBUG_XMP_READ  0
 #define DEBUG_XMP_WRITE 0

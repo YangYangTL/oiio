@@ -15,7 +15,7 @@ target_link_libraries (OpenImageIO_Util
 if (WIN32)
     target_link_libraries (OpenImageIO_Util psapi.lib)
 endif ()
-link_ilmbase (OpenImageIO_Util)
+target_link_libraries (OpenImageIO_Util ${ILMBASE_LIBRARIES})
 
 if (VERBOSE)
     message(STATUS "Setting SOVERSION to: ${SOVERSION}")
@@ -97,5 +97,10 @@ if (OIIO_BUILD_TESTS)
     set_target_properties (simd_test PROPERTIES FOLDER "Unit Tests")
     target_link_libraries (simd_test OpenImageIO_Util ${Boost_LIBRARIES} ${CMAKE_DL_LIBS})
     add_test (unit_simd simd_test)
+
+    add_executable (filter_test filter_test.cpp)
+    set_target_properties (filter_test PROPERTIES FOLDER "Unit Tests")
+    target_link_libraries (filter_test OpenImageIO ${Boost_LIBRARIES} ${CMAKE_DL_LIBS})
+    add_test (unit_filter filter_test)
 
 endif ()

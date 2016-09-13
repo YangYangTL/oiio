@@ -32,15 +32,37 @@
 #ifndef OPENIMAGEIO_IMAGEBUFALGO_UTIL_H
 #define OPENIMAGEIO_IMAGEBUFALGO_UTIL_H
 
-#include "imagebufalgo.h"
+#include <OpenImageIO/platform.h>
+#include <OpenImageIO/imagebufalgo.h>
+#include <OpenImageIO/thread.h>
+
+#if OIIO_CPLUSPLUS_VERSION >= 11
+# include <functional>
+#else
+# include <boost/bind.hpp>
+#endif
 
 
 OIIO_NAMESPACE_BEGIN
 
+#if OIIO_CPLUSPLUS_VERSION >= 11
+using std::bind;
+using std::ref;
+using std::cref;
+using namespace std::placeholders;
+using std::placeholders::_1;
+#else
+using boost::bind;
+using boost::ref;
+using boost::cref;
+using boost::this_thread::get_id;
+#endif
 
 
 
 namespace ImageBufAlgo {
+
+enum SplitDir { Split_X, Split_Y, Split_Z, Split_Biggest };
 
 /// Helper template for generalized multithreading for image processing
 /// functions.  Some function/functor f is applied to every pixel the
@@ -48,45 +70,76 @@ namespace ImageBufAlgo {
 /// threads != 1.  Note that threads == 0 indicates that the number of
 /// threads should be as set by the global OIIO "threads" attribute.
 ///
+/// The optional splitdir determines along which axis the split will be
+/// made. The default is Split_Y (vertical splits), which generally seems
+/// the fastest (due to cache layout issues?), but perhaps there are
+/// algorithms where it's better to split in X, Z, or along the longest
+/// axis.
+///
 /// Most image operations will require additional arguments, including
 /// additional input and output images or other parameters.  The
 /// parallel_image template can still be used by employing the
-/// boost::bind (or std::bind, for C++11).  For example, suppose you
+/// std::bind (or boost::bind, for C++ < 11).  For example, suppose you
 /// have an image operation defined as:
 ///     void my_image_op (ImageBuf &out, const ImageBuf &in,
 ///                       float scale, ROI roi);
 /// Then you can parallelize it as follows:
-///     ImageBuf R /*result*/, A /*input*/;
+///     ImageBuf R, A;   // result, input
 ///     ROI roi = get_roi (R.spec());
-///     parallel_image (boost::bind(my_image_op,boost::ref(R),
-///                                 boost::cref(A),3.14,_1), roi);
+///     parallel_image (bind(my_image_op,ref(R), cref(A),3.14,_1), roi);
 ///
 template <class Func>
 void
-parallel_image (Func f, ROI roi, int nthreads=0)
+parallel_image (Func f, ROI roi, int nthreads=0, SplitDir splitdir=Split_Y)
 {
     // Special case: threads <= 0 means to use the "threads" attribute
     if (nthreads <= 0)
         OIIO::getattribute ("threads", nthreads);
-
-    if (nthreads <= 1 || roi.npixels() < 1000) {
+    // Try not to assign a thread less than 16k pixels, or it's not worth
+    // the thread startup/teardown cost.
+    nthreads = std::min (nthreads, 1 + int(roi.npixels() / size_t(16384)));
+    if (nthreads <= 1) {
         // Just one thread, or a small image region: use this thread only
         f (roi);
-    } else {
-        // Spawn threads by dividing the region into y bands.
-        boost::thread_group threads;
-        int blocksize = std::max (1, (roi.height() + nthreads - 1) / nthreads);
-        int roi_ybegin = roi.ybegin;
-        int roi_yend = roi.yend;
-        for (int i = 0;  i < nthreads;  i++) {
-            roi.ybegin = roi_ybegin + i * blocksize;
-            roi.yend = std::min (roi.ybegin + blocksize, roi_yend);
+        return;
+    }
+
+    // If splitdir was not explicit, find the longest edge.
+    if (splitdir >= Split_Biggest)
+        splitdir = roi.width() > roi.height() ? Split_X : Split_Y;
+    int minmax[6] = { roi.xbegin, roi.xend, roi.ybegin, roi.yend,
+                      roi.zbegin, roi.zend };
+    int roi_begin = minmax[2*int(splitdir)];
+    int roi_end = minmax[2*int(splitdir)+1];
+    int splitlen = roi_end - roi_begin;
+    nthreads = std::min (nthreads, splitlen);
+
+    // Spawn threads by dividing the region into bands.
+    OIIO::thread_group threads;
+    int blocksize = std::max (1, (splitlen + nthreads - 1) / nthreads);
+    for (int i = 0;  i < nthreads;  i++) {
+        if (splitdir == Split_Y) {
+            roi.ybegin = roi_begin + i * blocksize;
+            roi.yend = std::min (roi.ybegin + blocksize, roi_end);
             if (roi.ybegin >= roi.yend)
                 break;   // no more work to dole out
-            threads.add_thread (new boost::thread (f, roi));
+        } else if (splitdir == Split_X) {
+            roi.xbegin = roi_begin + i * blocksize;
+            roi.xend = std::min (roi.xbegin + blocksize, roi_end);
+            if (roi.xbegin >= roi.xend)
+                break;   // no more work to dole out
+        } else { // if (splitdir == Split_Z)
+            roi.zbegin = roi_begin + i * blocksize;
+            roi.zend = std::min (roi.zbegin + blocksize, roi_end);
+            if (roi.zbegin >= roi.zend)
+                break;   // no more work to dole out
         }
-        threads.join_all ();
+        if (i < nthreads-1)
+            threads.add_thread (new OIIO::thread (f, roi));
+        else
+            f (roi);   // Run the last one in the calling thread
     }
+    threads.join_all ();
 }
 
 
@@ -118,15 +171,18 @@ inline bool IBAprep (ROI &roi, ImageBuf *dst,
 
 enum IBAprep_flags {
     IBAprep_DEFAULT = 0,
-    IBAprep_REQUIRE_ALPHA = 1,
-    IBAprep_REQUIRE_Z = 2,
-    IBAprep_REQUIRE_SAME_NCHANNELS = 4,
-    IBAprep_NO_COPY_ROI_FULL = 8,       // Don't copy the src's roi_full
-    IBAprep_NO_SUPPORT_VOLUME = 16,     // Don't know how to do volumes
-    IBAprep_NO_COPY_METADATA = 256,     // N.B. default copies all metadata
-    IBAprep_COPY_ALL_METADATA = 512,    // Even unsafe things
+    IBAprep_REQUIRE_ALPHA = 1<<0,
+    IBAprep_REQUIRE_Z = 1<<1,
+    IBAprep_REQUIRE_SAME_NCHANNELS = 1<<2,
+    IBAprep_NO_COPY_ROI_FULL = 1<<3,    // Don't copy the src's roi_full
+    IBAprep_NO_SUPPORT_VOLUME = 1<<4,   // Don't know how to do volumes
+    IBAprep_NO_COPY_METADATA = 1<<8,    // N.B. default copies all metadata
+    IBAprep_COPY_ALL_METADATA = 1<<9,   // Even unsafe things
     IBAprep_CLAMP_MUTUAL_NCHANNELS = 1<<10, // Clamp roi.chend to max of inputs
-    IBAprep_SUPPORT_DEEP = 1<<11,
+    IBAprep_SUPPORT_DEEP = 1<<11,       // Operation allows deep images
+    IBAprep_DEEP_MIXED = 1<<12,         // Allow deep & non-deep combinations
+    IBAprep_DST_FLOAT_PIXELS = 1<<13,   // If dst is uninit, make it float
+    IBAprep_MINIMIZE_NCHANNELS = 1<<14, // Multi-inputs get min(nchannels)
 };
 
 

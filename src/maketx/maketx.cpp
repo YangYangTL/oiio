@@ -36,9 +36,6 @@
 #include <limits>
 #include <sstream>
 
-#include <boost/version.hpp>
-#include <boost/filesystem.hpp>
-#include <boost/regex.hpp>
 #include <OpenEXR/ImathMatrix.h>
 
 #include "OpenImageIO/argparse.h"
@@ -227,8 +224,6 @@ getargs (int argc, char *argv[], ImageSpec &configspec)
                   "--help", &help, "Print help message",
                   "-v", &verbose, "Verbose status messages",
                   "-o %s", &outputfilename, "Output filename",
-                  "--new", NULL, "",
-                  "--old", NULL, "Old mode",
                   "--threads %d", &nthreads, "Number of threads (default: #cores)",
                   "-u", &updatemode, "Update mode",
                   "--format %s", &fileformatname, "Specify output file format (default: guess from extension)",
@@ -265,7 +260,6 @@ getargs (int argc, char *argv[], ImageSpec &configspec)
                           &Mscr[2][0], &Mscr[2][1], &Mscr[2][2], &Mscr[2][3], 
                           &Mscr[3][0], &Mscr[3][1], &Mscr[3][2], &Mscr[3][3], 
                           "Set the screen matrix",
-                  "--hash", NULL, "",
                   "--prman-metadata", &prman_metadata, "Add prman specific metadata",
                   "--attrib %L %L", &any_attrib_names, &any_attrib_values, "Sets metadata attribute (name, value)",
                   "--sattrib %L %L", &string_attrib_names, &string_attrib_values, "Sets string metadata attribute (name, value)",
@@ -298,9 +292,14 @@ getargs (int argc, char *argv[], ImageSpec &configspec)
         ap.usage ();
         exit (EXIT_FAILURE);
     }
-    if (help || filenames.empty()) {
+    if (help) {
         ap.usage ();
         exit (EXIT_FAILURE);
+    }
+    if (filenames.empty()) {
+        ap.briefusage ();
+        std::cout << "\nFor detailed help: maketx --help\n";
+        exit (EXIT_SUCCESS);
     }
 
     int optionsum = ((int)shadowmode + (int)envlatlmode + (int)envcubemode +
@@ -308,7 +307,6 @@ getargs (int argc, char *argv[], ImageSpec &configspec)
     if (optionsum > 1) {
         std::cerr << "maketx ERROR: At most one of the following options may be set:\n"
                   << "\t--shadow --envlatl --envcube --lightprobe\n";
-        ap.usage ();
         exit (EXIT_FAILURE);
     }
     if (optionsum == 0)
@@ -318,7 +316,6 @@ getargs (int argc, char *argv[], ImageSpec &configspec)
         std::cerr << "maketx ERROR: '--prman' compatibility, and '--oiio' optimizations are mutually exclusive.\n";
         std::cerr << "\tIf you'd like both prman and oiio compatibility, you should choose --prman\n";
         std::cerr << "\t(at the expense of oiio-specific optimizations)\n";
-        ap.usage ();
         exit (EXIT_FAILURE);
     }
 

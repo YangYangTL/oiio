@@ -33,8 +33,8 @@
 #include <sstream>
 
 #include <OpenEXR/half.h>
+#include <OpenEXR/ImfTimeCode.h>
 
-#include <boost/tokenizer.hpp>
 #include <boost/foreach.hpp>
 
 #include "OpenImageIO/dassert.h"
@@ -43,8 +43,12 @@
 #include "OpenImageIO/fmath.h"
 #include "OpenImageIO/imageio.h"
 #include "imageio_pvt.h"
-#include "OpenImageIO/pugixml.hpp"
 
+#if USE_EXTERNAL_PUGIXML
+# include "pugixml.hpp"
+#else
+# include "OpenImageIO/pugixml.hpp"
+#endif
 
 OIIO_NAMESPACE_BEGIN
 
@@ -106,7 +110,7 @@ pvt::get_default_quantize (TypeDesc format,
     case TypeDesc::DOUBLE:
         get_default_quantize_ <double> (quant_min, quant_max);
         break;
-    default: ASSERT(0);
+    default: ASSERT_MSG (0, "Unknown data format %d", format.basetype);
     }
 }
 
@@ -120,7 +124,6 @@ ImageSpec::ImageSpec (TypeDesc format)
       nchannels(0), format(format), alpha_channel(-1), z_channel(-1),
       deep(false)
 {
-    set_format (format);
 }
 
 
@@ -133,7 +136,6 @@ ImageSpec::ImageSpec (int xres, int yres, int nchans, TypeDesc format)
       nchannels(nchans), format(format), alpha_channel(-1), z_channel(-1),
       deep(false)
 {
-    set_format (format);
     default_channel_names ();
 }
 
@@ -143,6 +145,7 @@ void
 ImageSpec::set_format (TypeDesc fmt)
 {
     format = fmt;
+    channelformats.clear ();
 }
 
 
@@ -151,37 +154,26 @@ void
 ImageSpec::default_channel_names ()
 {
     channelnames.clear();
+    channelnames.reserve (nchannels);
     alpha_channel = -1;
     z_channel = -1;
-    switch (nchannels) {
-    case 1:
-        channelnames.push_back ("A");
-        break;
-    case 2:
-        channelnames.push_back ("I");
-        channelnames.push_back ("A");
-        alpha_channel = 1;
-        break;
-    case 3:
-        channelnames.push_back ("R");
-        channelnames.push_back ("G");
-        channelnames.push_back ("B");
-        break;
-    default:
-        if (nchannels >= 1)
-            channelnames.push_back ("R");
-        if (nchannels >= 2)
-            channelnames.push_back ("G");
-        if (nchannels >= 3)
-            channelnames.push_back ("B");
-        if (nchannels >= 4) {
-            channelnames.push_back ("A");
-            alpha_channel = 3;
-        }
-        for (int c = 4;  c < nchannels;  ++c)
-            channelnames.push_back (Strutil::format("channel%d", c));
-        break;
+    if (nchannels == 1) {   // Special case: 1-channel is named "Y"
+        channelnames.push_back ("Y");
+        return;
     }
+    // General case: name channels R, G, B, A, channel4, channel5, ...
+    if (nchannels >= 1)
+        channelnames.push_back ("R");
+    if (nchannels >= 2)
+        channelnames.push_back ("G");
+    if (nchannels >= 3)
+        channelnames.push_back ("B");
+    if (nchannels >= 4) {
+        channelnames.push_back ("A");
+        alpha_channel = 3;
+    }
+    for (int c = 4;  c < nchannels;  ++c)
+        channelnames.push_back (Strutil::format("channel%d", c));
 }
 
 
@@ -552,7 +544,7 @@ format_raw_metadata (const ImageIOParameter &p, int maxsize=16)
 {
     std::string out;
     TypeDesc element = p.type().elementtype();
-    int nfull = p.type().numelements() * p.nvalues();
+    int nfull = int(p.type().numelements()) * p.nvalues();
     int n = std::min (nfull, maxsize);
     if (element.basetype == TypeDesc::STRING) {
         for (int i = 0;  i < n;  ++i) {
@@ -853,6 +845,11 @@ ImageSpec::metadata_val (const ImageIOParameter &p, bool human)
                 break;
             }
         }
+        if (p.type() == TypeDesc::TypeTimeCode) {
+            Imf::TimeCode tc = *reinterpret_cast<const Imf::TimeCode *>(p.data());
+            nice = Strutil::format ("%02d:%02d:%02d:%02d", tc.hours(),
+                                    tc.minutes(), tc.seconds(), tc.frame());
+        }
         if (nice.length())
             out = out + " (" + nice + ")";
     }
@@ -992,4 +989,3 @@ ImageSpec::from_xml (const char *xml)
 
 
 OIIO_NAMESPACE_END
-

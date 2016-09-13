@@ -31,20 +31,13 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <cmath>
 #include <iostream>
 #include <iterator>
 #include <vector>
 #include <string>
 #include <iomanip>
-
-#include <boost/algorithm/string.hpp>
-#include <boost/tokenizer.hpp>
-#include <boost/foreach.hpp>
-#include <boost/filesystem.hpp>
-
-using boost::algorithm::iequals;
-
 
 #include "OpenImageIO/argparse.h"
 #include "OpenImageIO/imageio.h"
@@ -56,8 +49,6 @@ using boost::algorithm::iequals;
 
 OIIO_NAMESPACE_USING
 using namespace OiioTool;
-
-
 using namespace ImageBufAlgo;
 
 

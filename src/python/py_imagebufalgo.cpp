@@ -160,7 +160,7 @@ IBA_noise (ImageBuf &dst, std::string type, float A, float B, bool mono, int see
 bool
 IBA_channels (ImageBuf &dst, const ImageBuf &src,
               tuple channelorder_, tuple newchannelnames_,
-              bool shuffle_channel_names)
+              bool shuffle_channel_names, int nthreads)
 {
     size_t nchannels = (size_t) len(channelorder_);
     if (nchannels < 1) {
@@ -199,7 +199,7 @@ IBA_channels (ImageBuf &dst, const ImageBuf &src,
     return ImageBufAlgo::channels (dst, src, (int)nchannels, &channelorder[0],
                          channelvalues.size() ? &channelvalues[0] : NULL,
                          newchannelnames.size() ? &newchannelnames[0] : NULL,
-                         shuffle_channel_names);
+                         shuffle_channel_names, nthreads);
 }
 
 
@@ -229,6 +229,26 @@ IBA_flatten (ImageBuf &dst, const ImageBuf &src, ROI roi, int nthreads)
 {
     ScopedGILRelease gil;
     return ImageBufAlgo::flatten (dst, src, roi, nthreads);
+}
+
+
+
+bool
+IBA_deep_merge (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
+                 bool occlusion_cull, ROI roi, int nthreads)
+{
+    ScopedGILRelease gil;
+    return ImageBufAlgo::deep_merge (dst, A, B, occlusion_cull, roi, nthreads);
+}
+
+
+
+bool
+IBA_copy (ImageBuf &dst, const ImageBuf &src, TypeDesc::BASETYPE convert,
+          ROI roi, int nthreads)
+{
+    ScopedGILRelease gil;
+    return ImageBufAlgo::copy (dst, src, convert, roi, nthreads);
 }
 
 
@@ -303,15 +323,6 @@ IBA_flop (ImageBuf &dst, const ImageBuf &src, ROI roi, int nthreads)
 {
     ScopedGILRelease gil;
     return ImageBufAlgo::flop (dst, src, roi, nthreads);
-}
-
-
-
-bool
-IBA_flipflop (ImageBuf &dst, const ImageBuf &src, ROI roi, int nthreads)
-{
-    ScopedGILRelease gil;
-    return ImageBufAlgo::flipflop (dst, src, roi, nthreads);
 }
 
 
@@ -854,6 +865,35 @@ IBA_median_filter (ImageBuf &dst, const ImageBuf &src,
 
 
 bool
+IBA_dilate (ImageBuf &dst, const ImageBuf &src,
+            int width, int height, ROI roi, int nthreads)
+{
+    ScopedGILRelease gil;
+    return ImageBufAlgo::dilate (dst, src, width, height, roi, nthreads);
+}
+
+
+
+bool
+IBA_erode (ImageBuf &dst, const ImageBuf &src,
+           int width, int height, ROI roi, int nthreads)
+{
+    ScopedGILRelease gil;
+    return ImageBufAlgo::erode (dst, src, width, height, roi, nthreads);
+}
+
+
+
+bool
+IBA_laplacian (ImageBuf &dst, const ImageBuf &src, ROI roi, int nthreads)
+{
+    ScopedGILRelease gil;
+    return ImageBufAlgo::laplacian (dst, src, roi, nthreads);
+}
+
+
+
+bool
 IBA_fft (ImageBuf &dst, const ImageBuf &src, ROI roi, int nthreads)
 {
     ScopedGILRelease gil;
@@ -926,8 +966,8 @@ IBA_colorconvert (ImageBuf &dst, const ImageBuf &src,
                   ROI roi = ROI::All(), int nthreads = 0)
 {
     ScopedGILRelease gil;
-    return ImageBufAlgo::colorconvert (dst, src, from.c_str(), to.c_str(),
-                                       unpremult, roi, nthreads);
+    return ImageBufAlgo::colorconvert (dst, src, from, to,
+                                       unpremult, NULL, roi, nthreads);
 }
 
 
@@ -940,8 +980,8 @@ IBA_colorconvert_colorconfig (ImageBuf &dst, const ImageBuf &src,
 {
     ColorConfig config (colorconfig);
     ScopedGILRelease gil;
-    return ImageBufAlgo::colorconvert (dst, src, from.c_str(), to.c_str(),
-                                       unpremult, &config, roi, nthreads);
+    return ImageBufAlgo::colorconvert (dst, src, from, to, unpremult,
+                                       &config, roi, nthreads);
 }
 
 
@@ -954,10 +994,9 @@ IBA_ociolook (ImageBuf &dst, const ImageBuf &src, const std::string &looks,
               ROI roi = ROI::All(), int nthreads = 0)
 {
     ScopedGILRelease gil;
-    return ImageBufAlgo::ociolook (dst, src, looks.c_str(),
-                                   from.c_str(), to.c_str(),
+    return ImageBufAlgo::ociolook (dst, src, looks, from, to,
                                    inverse, unpremult,
-                                   context_key.c_str(), context_value.c_str(),
+                                   context_key, context_value, NULL,
                                    roi, nthreads);
 }
 
@@ -973,10 +1012,9 @@ IBA_ociolook_colorconfig (ImageBuf &dst, const ImageBuf &src, const std::string 
 {
     ColorConfig config (colorconfig);
     ScopedGILRelease gil;
-    return ImageBufAlgo::ociolook (dst, src, looks.c_str(),
-                                   from.c_str(), to.c_str(),
+    return ImageBufAlgo::ociolook (dst, src, looks, from, to,
                                    inverse, unpremult,
-                                   context_key.c_str(), context_value.c_str(),
+                                   context_key, context_value,
                                    &config, roi, nthreads);
 }
 
@@ -1000,7 +1038,7 @@ IBA_ociodisplay (ImageBuf &dst, const ImageBuf &src,
                                       from == object() ? NULL : from_str.c_str(),
                                       looks == object() ? NULL : looks_str.c_str(),
                                       unpremult,
-                                      context_key.c_str(), context_value.c_str(),
+                                      context_key, context_value, NULL,
                                       roi, nthreads);
 }
 
@@ -1025,9 +1063,38 @@ IBA_ociodisplay_colorconfig (ImageBuf &dst, const ImageBuf &src,
     return ImageBufAlgo::ociodisplay (dst, src, display.c_str(), view.c_str(),
                                       from == object() ? NULL : from_str.c_str(),
                                       looks == object() ? NULL : looks_str.c_str(),
-                                      unpremult,
-                                      context_key.c_str(), context_value.c_str(),
+                                      unpremult, context_key, context_value,
                                       &config, roi, nthreads);
+}
+
+
+
+bool
+IBA_ociofiletransform (ImageBuf &dst, const ImageBuf &src,
+                       const std::string &name,
+                       bool inverse, bool unpremult,
+                       ROI roi = ROI::All(), int nthreads = 0)
+{
+    ScopedGILRelease gil;
+    return ImageBufAlgo::ociofiletransform (dst, src, name,
+                                            inverse, unpremult, NULL,
+                                            roi, nthreads);
+}
+
+
+
+bool
+IBA_ociofiletransform_colorconfig (ImageBuf &dst, const ImageBuf &src,
+                                   const std::string &name,
+                                   bool inverse, bool unpremult,
+                                   const std::string &colorconfig="",
+                                   ROI roi = ROI::All(), int nthreads = 0)
+{
+    ColorConfig config (colorconfig);
+    ScopedGILRelease gil;
+    return ImageBufAlgo::ociofiletransform (dst, src, name,
+                                            inverse, unpremult, &config,
+                                            roi, nthreads);
 }
 
 
@@ -1086,6 +1153,42 @@ IBA_fixNonFinite (ImageBuf &dst, const ImageBuf &src,
     return ImageBufAlgo::fixNonFinite (dst, src, mode, NULL, roi, nthreads);
 }
 
+
+
+bool
+IBA_render_point (ImageBuf &dst, int x, int y, tuple color_ = tuple())
+{
+    std::vector<float> color;
+    py_to_stdvector (color, color_);
+    color.resize (dst.nchannels(), 1.0f);
+    ScopedGILRelease gil;
+    return ImageBufAlgo::render_point (dst, x, y, color);
+}
+
+
+bool
+IBA_render_line (ImageBuf &dst, int x1, int y1, int x2, int y2,
+                 tuple color_ = tuple(), bool skip_first_point=false)
+{
+    std::vector<float> color;
+    py_to_stdvector (color, color_);
+    color.resize (dst.nchannels(), 1.0f);
+    ScopedGILRelease gil;
+    return ImageBufAlgo::render_line (dst, x1, y1, x2, y2,
+                                      color, skip_first_point);
+}
+
+
+bool
+IBA_render_box (ImageBuf &dst, int x1, int y1, int x2, int y2,
+                 tuple color_ = tuple(), bool fill=false)
+{
+    std::vector<float> color;
+    py_to_stdvector (color, color_);
+    color.resize (dst.nchannels(), 1.0f);
+    ScopedGILRelease gil;
+    return ImageBufAlgo::render_box (dst, x1, y1, x2, y2, color, fill);
+}
 
 
 bool
@@ -1202,7 +1305,7 @@ void declare_imagebufalgo()
         .def("channels", &IBA_channels,
              (arg("dst"), arg("src"), arg("channelorder"),
               arg("newchannelnames")=tuple(),
-              arg("shuffle_channel_names")=false))
+              arg("shuffle_channel_names")=false, arg("nthreads")=0) )
         .staticmethod("channels")
 
         .def("channel_append", IBA_channel_append,
@@ -1219,6 +1322,16 @@ void declare_imagebufalgo()
              (arg("dst"), arg("src"),
               arg("roi")=ROI::All(), arg("nthreads")=0))
         .staticmethod("flatten")
+
+        .def("deep_merge", IBA_deep_merge,
+             (arg("dst"), arg("A"), arg("B"), arg("occlusion_cull")=true,
+              arg("roi")=ROI::All(), arg("nthreads")=0))
+        .staticmethod("deep_merge")
+
+        .def("copy", IBA_copy,
+             (arg("dst"), arg("src"), arg("convert")=TypeDesc::UNKNOWN,
+              arg("roi")=ROI::All(), arg("nthreads")=0))
+        .staticmethod("copy")
 
         .def("crop", IBA_crop,
              (arg("dst"), arg("src"),
@@ -1260,11 +1373,6 @@ void declare_imagebufalgo()
              (arg("dst"), arg("src"),
               arg("roi")=ROI::All(), arg("nthreads")=0))
         .staticmethod("flop")
-
-        .def("flipflop", IBA_rotate180,
-             (arg("dst"), arg("src"),
-              arg("roi")=ROI::All(), arg("nthreads")=0))
-        .staticmethod("flipflop")
 
         .def("reorient", IBA_reorient,
              (arg("dst"), arg("src"), arg("nthreads")=0))
@@ -1449,6 +1557,17 @@ void declare_imagebufalgo()
               arg("roi")=ROI::All(), arg("nthreads")=0))
         .staticmethod("ociodisplay")
 
+        .def("ociofiletransform", &IBA_ociofiletransform,
+             (arg("dst"), arg("src"), arg("name"),
+              arg("unpremult")=false, arg("invert")=false,
+              arg("roi")=ROI::All(), arg("nthreads")=0))
+        .def("ociofiletransform", &IBA_ociofiletransform_colorconfig,
+             (arg("dst"), arg("src"), arg("name"),
+              arg("unpremult")=false, arg("invert")=false,
+              arg("colorconfig")="",
+              arg("roi")=ROI::All(), arg("nthreads")=0))
+        .staticmethod("ociofiletransform")
+
         // computePixelStats, 
 
         .def("compare", &IBA_compare,
@@ -1540,6 +1659,23 @@ void declare_imagebufalgo()
               arg("roi")=ROI::All(), arg("nthreads")=0))
         .staticmethod("median_filter")
 
+        .def("dilate", &IBA_dilate,
+             (arg("dst"), arg("src"),
+              arg("width")=3, arg("height")=-1,
+              arg("roi")=ROI::All(), arg("nthreads")=0))
+        .staticmethod("dilate")
+
+        .def("erode", &IBA_erode,
+             (arg("dst"), arg("src"),
+              arg("width")=3, arg("height")=-1,
+              arg("roi")=ROI::All(), arg("nthreads")=0))
+        .staticmethod("erode")
+
+        .def("laplacian", &IBA_laplacian,
+             (arg("dst"), arg("src"),
+              arg("roi")=ROI::All(), arg("nthreads")=0))
+        .staticmethod("laplacian")
+
         .def("fft", &IBA_fft,
              (arg("dst"), arg("src"),
               arg("roi")=ROI::All(), arg("nthreads")=0))
@@ -1585,6 +1721,20 @@ void declare_imagebufalgo()
              (arg("dst"), arg("A"), arg("B"), arg("z_zeroisinf")=false,
               arg("roi")=ROI::All(), arg("nthreads")=0))
         .staticmethod("zover")
+
+        .def("render_point", &IBA_render_point,
+             (arg("dst"), arg("x"), arg("y"), arg("color")=tuple()))
+        .staticmethod("render_point")
+
+        .def("render_line", &IBA_render_line,
+             (arg("dst"), arg("x1"), arg("y1"), arg("x2"), arg("y2"),
+              arg("color")=tuple(), arg("skip_first_point")=false))
+        .staticmethod("render_line")
+
+        .def("render_box", &IBA_render_box,
+             (arg("dst"), arg("x1"), arg("y1"), arg("x2"), arg("y2"),
+              arg("color")=tuple(), arg("fill")=false))
+        .staticmethod("render_box")
 
         .def("render_text", &IBA_render_text,
              (arg("dst"), arg("x"), arg("y"), arg("text"),

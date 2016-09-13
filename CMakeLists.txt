@@ -2,19 +2,27 @@ project (OpenImageIO)
 
 # Release version of the library
 set (OIIO_VERSION_MAJOR 1)
-set (OIIO_VERSION_MINOR 6)
-set (OIIO_VERSION_PATCH 4)
+set (OIIO_VERSION_MINOR 7)
+set (OIIO_VERSION_PATCH 5)
 set (OIIO_VERSION_RELEASE_TYPE "dev")   # "dev", "betaX", "RCY", ""
 
 cmake_minimum_required (VERSION 2.6)
 if (NOT CMAKE_VERSION VERSION_LESS 2.8.4)
     cmake_policy (SET CMP0017 NEW)
 endif ()
+if (NOT CMAKE_VERSION VERSION_LESS 3.0)
+    cmake_policy (SET CMP0025 NEW)  # Detect AppleClang for new CMake
+endif ()
 if (NOT CMAKE_VERSION VERSION_LESS 3.2.2)
     cmake_policy (SET CMP0042 OLD)
     cmake_policy (SET CMP0046 OLD)
 endif ()
 set (CMAKE_ALLOW_LOOSE_LOOP_CONSTRUCTS TRUE)
+
+# N.B./FIXME - after CMake 3.0 is our minimum, we should change many of the
+# add_definitions to add_compile_options. In newer cmake versions, the
+# former is designated for definitions (-Dblah) and the latter is for
+# compile flags (-Wno-foo).
 
 if (VERBOSE)
     message (STATUS "Project source dir = ${PROJECT_SOURCE_DIR}")
@@ -43,43 +51,6 @@ if (CMAKE_USE_FOLDERS)
     set_property (GLOBAL PROPERTY USE_FOLDERS ON)
 endif ()
 
-# Figure out which compiler we're using
-if (CMAKE_COMPILER_IS_GNUCC)
-    execute_process (COMMAND ${CMAKE_C_COMPILER} -dumpversion
-                     OUTPUT_VARIABLE GCC_VERSION
-                     OUTPUT_STRIP_TRAILING_WHITESPACE)
-    if (VERBOSE)
-        message (STATUS "Using gcc ${GCC_VERSION} as the compiler")
-    endif ()
-endif ()
-message (STATUS "CMAKE_CXX_COMPILER is ${CMAKE_CXX_COMPILER}")
-message (STATUS "CMAKE_CXX_COMPILER_ID is ${CMAKE_CXX_COMPILER_ID}")
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set (CMAKE_COMPILER_IS_CLANG 1)
-endif ()
-if (CMAKE_CXX_COMPILER MATCHES "[Cc]lang")
-    # Second try: for earlier versions of CMake, the CMAKE_CXX_COMPILER_ID
-    # appears to be unreliable and may say "GNU" despite using clang, so
-    # directly match against the compiler name.
-    set (CMAKE_COMPILER_IS_CLANG 1)
-endif ()
-if (CMAKE_COMPILER_IS_CLANG)
-    if (NOT CLANG_VERSION_STRING)
-        EXECUTE_PROCESS( COMMAND ${CMAKE_CXX_COMPILER} --version OUTPUT_VARIABLE clang_full_version_string )
-        string (REGEX REPLACE ".*clang version ([0-9]+\\.[0-9]+).*" "\\1" CLANG_VERSION_STRING ${clang_full_version_string})
-    endif ()
-    if (VERBOSE)
-        message (STATUS "The compiler is Clang version ${CLANG_VERSION_STRING}")
-    endif ()
-endif ()
-
-if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
-    set (CMAKE_COMPILER_IS_INTEL 1)
-    if (VERBOSE)
-        message (STATUS "Using Intel as the compiler")
-    endif ()
-endif ()
-
 ## turn on more detailed warnings and consider warnings as errors
 set (STOP_ON_WARNING ON CACHE BOOL "Stop building if there are any compiler warnings")
 if (NOT MSVC)
@@ -89,40 +60,57 @@ if (NOT MSVC)
     endif ()
 endif ()
 
-if (CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_GNUCC)
+message (STATUS "CMAKE_CXX_COMPILER is ${CMAKE_CXX_COMPILER}")
+message (STATUS "CMAKE_CXX_COMPILER_ID is ${CMAKE_CXX_COMPILER_ID}")
+
+# Figure out which compiler we're using
+if (CMAKE_COMPILER_IS_GNUCC)
+    execute_process (COMMAND ${CMAKE_CXX_COMPILER} -dumpversion
+                     OUTPUT_VARIABLE GCC_VERSION
+                     OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if (VERBOSE)
+        message (STATUS "Using gcc ${GCC_VERSION} as the compiler")
+    endif ()
+endif ()
+
+# Figure out which compiler we're using, for tricky cases
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER MATCHES "[Cc]lang")
+    # If using any flavor of clang, set CMAKE_COMPILER_IS_CLANG. If it's
+    # Apple's variety, set CMAKE_COMPILER_IS_APPLECLANG and
+    # APPLECLANG_VERSION_STRING, otherwise for generic clang set
+    # CLANG_VERSION_STRING.
+    set (CMAKE_COMPILER_IS_CLANG 1)
+    EXECUTE_PROCESS( COMMAND ${CMAKE_CXX_COMPILER} --version OUTPUT_VARIABLE clang_full_version_string )
+    if (clang_full_version_string MATCHES "Apple")
+        set (CMAKE_CXX_COMPILER_ID "AppleClang")
+        set (CMAKE_COMPILER_IS_APPLECLANG 1)
+        string (REGEX REPLACE ".* version ([0-9]+\\.[0-9]+).*" "\\1" APPLECLANG_VERSION_STRING ${clang_full_version_string})
+        if (VERBOSE)
+            message (STATUS "The compiler is Clang: ${CMAKE_CXX_COMPILER_ID} version ${APPLECLANG_VERSION_STRING}")
+        endif ()
+    else ()
+        string (REGEX REPLACE ".* version ([0-9]+\\.[0-9]+).*" "\\1" CLANG_VERSION_STRING ${clang_full_version_string})
+        if (VERBOSE)
+            message (STATUS "The compiler is Clang: ${CMAKE_CXX_COMPILER_ID} version ${CLANG_VERSION_STRING}")
+        endif ()
+    endif ()
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
+    set (CMAKE_COMPILER_IS_INTEL 1)
+    if (VERBOSE)
+        message (STATUS "Using Intel as the compiler")
+    endif ()
+endif ()
+
+# Options common to gcc and clang
+if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_CLANG)
     # CMake doesn't automatically know what do do with
     # include_directories(SYSTEM...) when using clang or gcc.
     set (CMAKE_INCLUDE_SYSTEM_FLAG_CXX "-isystem ")
     # Ensure this macro is set for stdint.h
     add_definitions ("-D__STDC_LIMIT_MACROS")
+    add_definitions ("-D__STDC_CONSTANT_MACROS")
     # this allows native instructions to be used for sqrtf instead of a function call
     add_definitions ("-fno-math-errno")
-endif ()
-
-if (CMAKE_COMPILER_IS_CLANG)
-    # Disable some warnings for Clang, for some things that are too awkward
-    # to change just for the sake of having no warnings.
-    add_definitions ("-Wno-unused-function")
-    add_definitions ("-Wno-overloaded-virtual")
-    add_definitions ("-Wno-unneeded-internal-declaration")
-    add_definitions ("-Wno-unused-private-field")
-    add_definitions ("-Wno-tautological-compare")
-    # disable warning about unused command line arguments
-    add_definitions ("-Qunused-arguments")
-    # Don't warn if we ask it not to warn about warnings it doesn't know
-    add_definitions ("-Wunknown-warning-option")
-    if (CLANG_VERSION_STRING VERSION_GREATER 3.5)
-        add_definitions ("-Wno-unused-local-typedefs")
-    endif ()
-endif ()
-
-if (CMAKE_COMPILER_IS_GNUCC AND (NOT CMAKE_COMPILER_IS_CLANG) AND (NOT ${GCC_VERSION} VERSION_LESS 4.8))
-    # suppress a warning that Boost::Python hits in g++ 4.8
-    add_definitions ("-Wno-error=unused-local-typedefs")
-    add_definitions ("-Wno-unused-local-typedefs")
-endif ()
-
-if (CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_GNUCC)
     if (HIDE_SYMBOLS AND NOT DEBUGMODE)
         # Turn default symbol visibility to hidden
         set (VISIBILITY_COMMAND "-fvisibility=hidden -fvisibility-inlines-hidden")
@@ -136,10 +124,38 @@ if (CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_GNUCC)
     endif ()
 endif ()
 
-# Try to detect if this is an OSX distro new enough that the system library
-# is libc++.
-if (EXISTS "/usr/lib/libc++.dylib")
-    set (OSL_SYSTEM_HAS_LIBCPP ON)
+# Clang-specific options
+if (CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_APPLECLANG)
+    # Disable some warnings for Clang, for some things that are too awkward
+    # to change just for the sake of having no warnings.
+    add_definitions ("-Wno-unused-function")
+    add_definitions ("-Wno-overloaded-virtual")
+    add_definitions ("-Wno-unneeded-internal-declaration")
+    add_definitions ("-Wno-unused-private-field")
+    add_definitions ("-Wno-tautological-compare")
+    # disable warning about unused command line arguments
+    add_definitions ("-Qunused-arguments")
+    # Don't warn if we ask it not to warn about warnings it doesn't know
+    add_definitions ("-Wunknown-warning-option")
+    if (CLANG_VERSION_STRING VERSION_GREATER 3.5 OR
+        APPLECLANG_VERSION_STRING VERSION_GREATER 6.1)
+        add_definitions ("-Wno-unused-local-typedefs")
+    endif ()
+endif ()
+
+# gcc specific options
+if (CMAKE_COMPILER_IS_GNUCC AND NOT (CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_APPLECLANG))
+    if (NOT ${GCC_VERSION} VERSION_LESS 4.8)
+        # suppress a warning that Boost::Python hits in g++ 4.8
+        add_definitions ("-Wno-error=unused-local-typedefs")
+        add_definitions ("-Wno-unused-local-typedefs")
+    endif ()
+    if (NOT ${GCC_VERSION} VERSION_LESS 4.5)
+        add_definitions ("-Wno-unused-result")
+    endif ()
+    if (NOT ${GCC_VERSION} VERSION_LESS 6.0)
+        add_definitions ("-Wno-error=misleading-indentation")
+    endif ()
 endif ()
 
 
@@ -155,8 +171,15 @@ set (USE_QT ON CACHE BOOL "Include Qt support")
 set (FORCE_OPENGL_1 OFF CACHE BOOL "Force iv to use OpenGL's fixed pipeline")
 set (USE_PYTHON ON CACHE BOOL "Build the Python bindings")
 set (USE_PYTHON3 OFF CACHE BOOL "Build the Python3 bindings")
+set (PYTHON_VERSION 2.6)
+set (PYTHON3_VERSION 3.2)
+set (PYLIB_INCLUDE_SONAME OFF CACHE BOOL "If ON, soname/soversion will be set for Python module library")
+set (PYLIB_LIB_PREFIX OFF CACHE BOOL "If ON, prefix the Python module with 'lib'")
 set (USE_FIELD3D ON CACHE BOOL "Use Field3D if found")
 set (USE_FFMPEG ON CACHE BOOL "Use FFmpeg if found")
+set (JPEG_PATH "" CACHE STRING "Custom JPEG path")
+set (USE_JPEGTURBO ON CACHE BOOL "Use JPEG-Turbo if found")
+set (JPEGTURBO_PATH "" CACHE STRING "Custom JPEG-Turbo path")
 set (USE_OPENJPEG ON CACHE BOOL "Use OpenJpeg if found")
 set (USE_OCIO ON CACHE BOOL "Use OpenColorIO for color management if found")
 set (USE_OPENCV ON CACHE BOOL "Use OpenCV if found")
@@ -168,8 +191,6 @@ set (USE_LIBRAW ON CACHE BOOL "Use LibRaw if found")
 set (LIBRAW_PATH "" CACHE STRING "Custom LibRaw path")
 set (NOTHREADS OFF CACHE BOOL "Compile with no threads or locking")
 set (OIIO_THREAD_ALLOW_DCLP ON CACHE BOOL "OIIO threads may use DCLP for speed")
-set (PYTHON_VERSION 2.6)
-set (PYTHON3_VERSION 3.2)
 set (USE_NUKE ON CACHE BOOL "Build Nuke plugins, if Nuke is found")
 set (Nuke_ROOT "" CACHE STRING "Where to find Nuke installation")
 set (NUKE_VERSION 7.0)
@@ -179,22 +200,25 @@ set (PUGIXML_HOME "" CACHE STRING "Hint about where to find external PugiXML lib
 
 set (SOVERSION ${OIIO_VERSION_MAJOR}.${OIIO_VERSION_MINOR}
      CACHE STRING "Set the SO version in the SO name of the output library")
-
-set (PYLIB_INCLUDE_SONAME OFF CACHE BOOL "If ON, soname/soversion will be set for Python module library")
-set (PYLIB_LIB_PREFIX OFF CACHE BOOL "If ON, prefix the Python module with 'lib'")
 set (BUILD_OIIOUTIL_ONLY OFF CACHE BOOL "If ON, will build *only* libOpenImageIO_Util")
-set (OIIO_BUILD_CPP11 OFF CACHE BOOL "Compile in C++11 mode")
-set (OIIO_BUILD_CPP14 OFF CACHE BOOL "Compile in C++14 mode")
-set (OIIO_BUILD_LIBCPLUSPLUS OFF CACHE BOOL "Compile with clang libc++")
+set (USE_CPP11 ON CACHE BOOL "Compile in C++11 mode")
+set (USE_CPP14 OFF CACHE BOOL "Compile in C++14 mode")
+set (USE_LIBCPLUSPLUS OFF CACHE BOOL "Compile with clang libc++")
 set (EXTRA_CPP_ARGS "" CACHE STRING "Extra C++ command line definitions")
 set (USE_SIMD "" CACHE STRING "Use SIMD directives (0, sse2, sse3, ssse3, sse4.1, sse4.2)")
+set (USE_CCACHE ON CACHE BOOL "Use ccache if found")
+set (CODECOV OFF CACHE BOOL "Build code coverage tests")
 
-if (BUILDSTATIC AND ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-    # On Linux, the lack of -fPIC when building static libraries seems
-    # incompatible with the dynamic library needed for the Python bindings.
-    set (USE_PYTHON OFF)
-    set (USE_PYTHON3 OFF)
-endif()
+# Use ccache if found
+find_program (CCACHE_FOUND ccache)
+if (CCACHE_FOUND AND USE_CCACHE)
+    if (CMAKE_COMPILER_IS_CLANG AND USE_QT AND (NOT DEFINED ENV{CCACHE_CPP2}))
+        message (STATUS "Ignoring ccache because clang + Qt + env CCACHE_CPP2 is not set")
+    else ()
+        set_property (GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
+        set_property (GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
+    endif ()
+endif ()
 
 if (NOTHREADS)
     message (STATUS "NO THREADS!")
@@ -213,24 +237,45 @@ if (EXTRA_CPP_ARGS)
     add_definitions ("${EXTRA_CPP_ARGS}")
 endif()
 
-if (OIIO_BUILD_CPP11 OR OIIO_BUILD_CPP14)
-    if (OIIO_BUILD_CPP11)
-        message (STATUS "Building for C++11")
-        add_definitions ("-std=c++11")
-    endif()
-    if (OIIO_BUILD_CPP14)
-        message (STATUS "Building for C++14")
-        add_definitions ("-std=c++14")
-    endif()
-    if (CMAKE_COMPILER_IS_CLANG)
-        # C++ >= 11 doesn't like 'register' keyword, which is in Qt headers
-        add_definitions ("-Wno-deprecated-register")
+if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_INTEL)
+    if (USE_CPP11 OR USE_CPP14)
+        if (USE_CPP14)
+            message (STATUS "Building for C++14")
+            add_definitions ("-std=c++14")
+        elseif (USE_CPP11)
+            message (STATUS "Building for C++11")
+            add_definitions ("-std=c++11")
+        endif ()
+        if (CMAKE_COMPILER_IS_CLANG)
+            # C++ >= 11 doesn't like 'register' keyword, which is in Qt headers
+            add_definitions ("-Wno-deprecated-register")
+        endif ()
+    else ()
+        message (STATUS "Building for C++03!")
     endif ()
 endif ()
 
 if (USE_LIBCPLUSPLUS AND CMAKE_COMPILER_IS_CLANG)
     message (STATUS "Using libc++")
-    add_definitions ("-stdlib=libc++")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
+endif ()
+
+set (USE_fPIC OFF CACHE BOOL "Build with -fPIC")
+if (USE_fPIC)
+    add_definitions ("-fPIC")
+endif ()
+
+# Options common to gcc and clang
+if (CODECOV AND (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_CLANG))
+    message (STATUS "Compiling for code coverage analysis")
+    add_definitions ("-ftest-coverage -fprofile-arcs -O0 -DOIIO_CODE_COVERAGE=1")
+    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -ftest-coverage -fprofile-arcs")
+    set (CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -ftest-coverage -fprofile-arcs")
+    set (CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -ftest-coverage -fprofile-arcs")
+endif ()
+
+if (DEFINED ENV{TRAVIS} OR DEFINED ENV{APPVEYOR} OR DEFINED ENV{CI})
+    add_definitions ("-DOIIO_CI=1")
 endif ()
 
 if (NOT USE_SIMD STREQUAL "")
@@ -248,13 +293,16 @@ if (NOT USE_SIMD STREQUAL "")
             else ()
                 add_definitions ("-m${feature}")
             endif ()
+            if (feature STREQUAL "fma" AND (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_CLANG))
+                # If fma is requested, for numerical accuracy sake, turn it
+                # off by default except when we explicitly use madd. At some
+                # future time, we should look at this again carefully and
+                # see if we want to use it more widely by ffp-contract=fast.
+                add_definitions ("-ffp-contract=off")
+            endif ()
         endforeach()
     endif ()
 endif ()
-
-set (CMAKE_MODULE_PATH
-     "${PROJECT_SOURCE_DIR}/src/cmake/modules"
-     "${PROJECT_SOURCE_DIR}/src/cmake")
 
 # Set the default namespace
 if (NOT OIIO_NAMESPACE)
@@ -262,8 +310,40 @@ if (NOT OIIO_NAMESPACE)
          "Specify the master OpenImageIO C++ namespace: Options include OpenImageIO OpenImageIO_<YOURFACILITY> etc."
          FORCE)
 endif ()
-
 message(STATUS "Setting Namespace to: ${OIIO_NAMESPACE}")
+
+if (BUILDSTATIC)
+    message (STATUS "Building static libraries")
+    add_definitions(-DOIIO_STATIC_BUILD=1)
+    if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+        # On Linux, the lack of -fPIC when building static libraries seems
+        # incompatible with the dynamic library needed for the Python bindings.
+        set (USE_PYTHON OFF)
+        set (USE_PYTHON3 OFF)
+    endif ()
+    if (WIN32)
+        set (CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
+        set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
+    endif ()
+endif()
+
+# Use .a files if LINKSTATIC is enabled
+if (LINKSTATIC)
+    set (_orig_link_suffixes ${CMAKE_FIND_LIBRARY_SUFFIXES})
+    message (STATUS "Statically linking external libraries")
+    if (WIN32)
+        set (CMAKE_FIND_LIBRARY_SUFFIXES .lib .a ${CMAKE_FIND_LIBRARY_SUFFIXES})
+    else ()
+        # set (CMAKE_FIND_LIBRARY_SUFFIXES .a)
+        set (CMAKE_FIND_LIBRARY_SUFFIXES .a ${CMAKE_FIND_LIBRARY_SUFFIXES})
+    endif ()
+    add_definitions (-DBoost_USE_STATIC_LIBS=1)
+    set (Boost_USE_STATIC_LIBS 1)
+endif ()
+
+set (CMAKE_MODULE_PATH
+     "${PROJECT_SOURCE_DIR}/src/cmake/modules"
+     "${PROJECT_SOURCE_DIR}/src/cmake")
 
 include (util_macros)
 include (oiio_macros)
@@ -271,10 +351,10 @@ include (platform)
 include (externalpackages)
 
 
-include_directories(
+include_directories (
     "${CMAKE_SOURCE_DIR}/src/include"
     "${CMAKE_BINARY_DIR}/include/OpenImageIO"
-)
+  )
 
 
 ###########################################################################
@@ -356,17 +436,17 @@ endif ()
 
 
 if (MSVC)
+    add_definitions (/W1)
     add_definitions (-D_CRT_SECURE_NO_DEPRECATE)
     add_definitions (-D_CRT_SECURE_NO_WARNINGS)
     add_definitions (-D_CRT_NONSTDC_NO_WARNINGS)
     add_definitions (-D_SCL_SECURE_NO_WARNINGS)
     add_definitions (-DJAS_WIN_MSVC_BUILD)
-    if(NOT LINKSTATIC)
+    add_definitions (-DOPENEXR_DLL)
+    if (LINKSTATIC)
+        add_definitions (-DBoost_USE_STATIC_LIBS=1)
+    else ()
         add_definitions (-DBOOST_ALL_DYN_LINK)
-        add_definitions (-DOPENEXR_DLL)
-    endif ()
-    if (BUILDSTATIC)
-         add_definitions(-DOIIO_STATIC_BUILD=1)
     endif ()
 endif (MSVC)
 
@@ -379,6 +459,28 @@ include (CTest)
 
 # Tell CMake to process the sub-directories
 add_subdirectory (src/libutil)
+
+# Add IO plugin directories -- if we are embedding plugins, we need to visit
+# these directories BEFORE the OpenImageIO target is established (in
+# src/libOpenImageIO). For each plugin, we append to the lists of source
+# files, format libs, include directories, and definitions, all of which
+# will be used by src/libOpenImageIO.
+set (libOpenImageIO_srcs "")
+set (format_plugin_libs "")
+set (format_plugin_include_dirs "")
+set (format_plugin_definitions "")
+file (GLOB all_format_plugin_dirs src/*.imageio)
+if ("${OIIO_SITE}" STREQUAL "SPI")
+    # SPI only -- because of a workaround for a very weird linkage issue
+    # specific to our system, we need to be sure libtiff is referenced first.
+    set (all_format_plugin_dirs src/tiff.imageio ${all_format_plugin_dirs})
+    list (REMOVE_DUPLICATES all_format_plugin_dirs)
+endif ()
+if (EMBEDPLUGINS AND NOT BUILD_OIIOUTIL_ONLY)
+    foreach (plugin_dir ${all_format_plugin_dirs})
+        add_subdirectory (${plugin_dir})
+    endforeach ()
+endif ()
 
 if (NOT BUILD_OIIOUTIL_ONLY)
     add_subdirectory (src/libOpenImageIO)
@@ -395,41 +497,19 @@ if (OIIO_BUILD_TOOLS AND NOT BUILD_OIIOUTIL_ONLY)
   add_subdirectory (src/iv)
 endif ()
 
-# Add IO plugin directories
-if (NOT EMBEDPLUGINS)
-    add_subdirectory (src/bmp.imageio)
-    add_subdirectory (src/cineon.imageio)
-    add_subdirectory (src/dds.imageio)
-    add_subdirectory (src/dpx.imageio)
-    add_subdirectory (src/ffmpeg.imageio)
-    add_subdirectory (src/field3d.imageio)
-    add_subdirectory (src/fits.imageio)
-    add_subdirectory (src/gif.imageio)
-    add_subdirectory (src/hdr.imageio)
-    add_subdirectory (src/ico.imageio)
-    add_subdirectory (src/iff.imageio)
-    add_subdirectory (src/jpeg.imageio)
-    add_subdirectory (src/jpeg2000.imageio)
-    add_subdirectory (src/openexr.imageio)
-    add_subdirectory (src/png.imageio)
-    add_subdirectory (src/pnm.imageio)
-    add_subdirectory (src/psd.imageio)
-    add_subdirectory (src/ptex.imageio)
-    add_subdirectory (src/raw.imageio)
-    add_subdirectory (src/rla.imageio)
-    add_subdirectory (src/sgi.imageio)
-    add_subdirectory (src/socket.imageio)
-    add_subdirectory (src/softimage.imageio)
-    add_subdirectory (src/targa.imageio)
-    add_subdirectory (src/tiff.imageio)
-    add_subdirectory (src/webp.imageio)
-    add_subdirectory (src/zfile.imageio)
+# Add IO plugin directories -- if we are not embedding plugins, we need to
+# do it AFTER the OpenImageIO target is established (in src/libOpenImageIO),
+# since each plugin needs libOpenImageIO to be a dependency.
+if (NOT EMBEDPLUGINS AND NOT BUILD_OIIOUTIL_ONLY)
+    foreach (plugin_dir ${all_format_plugin_dirs})
+        add_subdirectory (${plugin_dir})
+    endforeach ()
 endif ()
 
-if (USE_PYTHON AND oiio_boost_PYTHON_FOUND AND NOT BUILD_OIIOUTIL_ONLY)
+if (USE_PYTHON AND boost_PYTHON_FOUND AND NOT BUILD_OIIOUTIL_ONLY)
     add_subdirectory (src/python)
 endif ()
-if (USE_PYTHON3 AND NOT BUILD_OIIOUTIL_ONLY)
+if (USE_PYTHON3 AND boost_PYTHON_FOUND AND NOT BUILD_OIIOUTIL_ONLY)
     #build the python3 module in a different binary directory since it will
     #have the same name as the python2 module (e.g. OpenImageIO.so)
     add_subdirectory (src/python src/python3)
@@ -460,35 +540,54 @@ add_subdirectory (src/nuke)
 #                    for "make testall", but not "make test".
 #
 
-# Make a copy of the testsuite into the build area
-if (DEFINED CMAKE_VERSION AND NOT CMAKE_VERSION VERSION_LESS 2.8)
-    file (COPY "${PROJECT_SOURCE_DIR}/testsuite"
-          DESTINATION "${CMAKE_BINARY_DIR}")
-endif()
+# Make a build/platform/testsuite directory, and copy the master runtest.py
+# there. The rest is up to the tests themselves.
+file (MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/testsuite")
+add_custom_command (OUTPUT "${CMAKE_BINARY_DIR}/testsuite/runtest.py"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${CMAKE_SOURCE_DIR}/testsuite/runtest.py"
+                        "${CMAKE_BINARY_DIR}/testsuite/runtest.py"
+                    MAIN_DEPENDENCY "${CMAKE_SOURCE_DIR}/testsuite/runtest.py")
+add_custom_target ( CopyFiles ALL DEPENDS "${CMAKE_BINARY_DIR}/testsuite/runtest.py" )
 
-# List all the individual testsuite tests here:
-oiio_add_tests (gpsread misnamed-file nonwhole-tiles
+# Basic tests that apply even to continuous integration tests:
+oiio_add_tests (
+                gpsread misnamed-file nonwhole-tiles
                 oiiotool oiiotool-composite oiiotool-deep oiiotool-fixnan
-                oiiotool-pattern oiiotool-readerror oiiotool-text
-                perchannel dither
+                oiiotool-pattern oiiotool-readerror
+                oiiotool-subimage oiiotool-text
+                maketx oiiotool-maketx
+                dither
                 dpx ico iff png psd rla sgi
                 python-typedesc python-imagespec python-roi python-deep
                 python-imageinput python-imageoutput
                 python-imagebuf python-imagebufalgo
-                maketx
-                texture-blurtube texture-crop texture-cropover
-                texture-derivs texture-fill texture-filtersize
                 texture-interp-bicubic
+                texture-blurtube
+                texture-crop texture-cropover
+                texture-derivs texture-fill texture-filtersize
+                texture-flipt texture-gray
+                texture-mip-nomip texture-mip-trilinear
+                texture-overscan texture-pointsample
+                texture-uint8
+                texture-width0blur
+                texture-fat texture-skinny texture-wrapfill
+                texture-missing texture-res texture-udim texture-udim2
+              )
+
+
+
+# Advanced tests that are done by hand and for releases:
+# FIXME -- at some point, try to fix these or provide new ref images
+if (NOT DEFINED ENV{TRAVIS})
+oiio_add_tests (
+                texture-half texture-uint16
                 texture-interp-bilinear
                 texture-interp-closest
-                texture-gray texture-uint8 texture-uint16 texture-half
-                texture-mip-nomip texture-mip-onelevel texture-mip-trilinear
-                texture-missing texture-overscan
-                texture-pointsample texture-width0blur texture-res
-                texture-skinny texture-fat texture-wrapfill
+                texture-mip-onelevel
                 texture-icwrite
                )
-
+endif ()
 
 # List testsuites which need special external reference images from the web
 # here:
@@ -496,13 +595,11 @@ oiio_add_tests (bmp
     IMAGEDIR bmpsuite
     URL http://entropymine.com/jason/bmpsuite/bmpsuite.zip)
 
-oiio_add_tests (tiff-suite tiff-depths
+oiio_add_tests (tiff-suite tiff-depths tiff-misc
     IMAGEDIR libtiffpic
     URL http://www.remotesensing.org/libtiff/images.html)
 
-oiio_add_tests (tiff-misc)
-
-oiio_add_tests (openexr-suite openexr-multires openexr-chroma openexr-v2
+oiio_add_tests (openexr-suite openexr-multires openexr-chroma openexr-v2 perchannel
     IMAGEDIR openexr-images
     URL http://www.openexr.com/downloads.html)
 
@@ -533,11 +630,17 @@ oiio_add_tests (webp
     IMAGEDIR webp-images
     URL http://code.google.com/speed/webp/gallery.html)
 
-oiio_add_tests (field3d texture-field3d
+oiio_add_tests (ptex
+    FOUNDVAR PTEX_FOUND)
+
+
+if (NOT DEFINED ENV{TRAVIS})
+
+oiio_add_tests (texture-field3d field3d
     FOUNDVAR FIELD3D_FOUND)
 
-oiio_add_tests (ptex
-    FOUNDVAR USE_PTEX)
+endif ()
+
 
 if (SPI_TESTS)
   oiio_add_tests (oiiotool-spi
@@ -564,9 +667,9 @@ file (MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/cpack")
 file (COPY "${PROJECT_SOURCE_DIR}/LICENSE" DESTINATION "${CMAKE_BINARY_DIR}/cpack")
 file (RENAME "${CMAKE_BINARY_DIR}/cpack/LICENSE" "${CMAKE_BINARY_DIR}/cpack/License.txt")
 set (CPACK_RESOURCE_FILE_LICENSE "${CMAKE_BINARY_DIR}/cpack/License.txt")
-file (COPY "${PROJECT_SOURCE_DIR}/README.rst" DESTINATION "${CMAKE_BINARY_DIR}/cpack")
-file (RENAME "${CMAKE_BINARY_DIR}/cpack/README.rst" "${CMAKE_BINARY_DIR}/cpack/Readme.rst")
-set (CPACK_RESOURCE_FILE_README "${CMAKE_BINARY_DIR}/cpack/Readme.rst")
+file (COPY "${PROJECT_SOURCE_DIR}/README.md" DESTINATION "${CMAKE_BINARY_DIR}/cpack")
+file (RENAME "${CMAKE_BINARY_DIR}/cpack/README.md" "${CMAKE_BINARY_DIR}/cpack/Readme.md")
+set (CPACK_RESOURCE_FILE_README "${CMAKE_BINARY_DIR}/cpack/Readme.md")
 set (CPACK_RESOURCE_FILE_WELCOME "${PROJECT_SOURCE_DIR}/src/doc/Welcome.txt")
 #SET (CPACK_STRIP_FILES Do we need this?)
 if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux")

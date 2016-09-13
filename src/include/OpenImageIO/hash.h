@@ -48,21 +48,38 @@
 #include "export.h"
 #include "oiioversion.h"
 #include "fmath.h"   /* for endian */
-#include "string_view.h"   /* for endian */
+#include "string_view.h"
+#include "array_view.h"
+
+#if OIIO_CPLUSPLUS_VERSION >= 11 || OIIO_MSVS_AT_LEAST_2013
+#  include <unordered_map>
+#else /* FIXME(C++11): remove this after making C++11 the baseline */
+#  include <boost/unordered_map.hpp>
+#endif
 
 
 OIIO_NAMESPACE_BEGIN
+
+// Define OIIO::unordered_map and OIIO::hash as either std or boost.
+#if OIIO_CPLUSPLUS_VERSION >= 11 || OIIO_MSVS_AT_LEAST_2013
+using std::unordered_map;
+using std::hash;
+#else /* FIXME(C++11): remove this after making C++11 the baseline */
+using boost::unordered_map;
+using boost::hash;
+#endif
+
 
 namespace xxhash {
 
 // xxhash:  http://code.google.com/p/xxhash/
 // It's BSD licensed.
 
-// DEPRECATED
+OIIO_DEPRECATED("Use XXH32(). (Deprecated since 1.6.")
 unsigned int OIIO_API XXH_fast32 (const void* input, int len,
                                   unsigned int seed=1771);
 
-// DEPRECATED
+OIIO_DEPRECATED("Use XXH32(). (Deprecated since 1.6.")
 unsigned int OIIO_API XXH_strong32 (const void* input, int len,
                                     unsigned int seed=1771);
 
@@ -476,9 +493,14 @@ public:
 
     /// Append more data
     void append (const void *data, size_t size);
-    /// Append more data from a vector, without thinking about sizes.
-    template<class T> void appendvec (const std::vector<T> &v) {
-        append (&v[0], v.size()*sizeof(T));
+    /// Append more data from an array_view, without thinking about sizes.
+    template<class T> void append (array_view<T> v) {
+        append (v.data(), v.size()*sizeof(T));
+    }
+
+    template<class T> OIIO_DEPRECATED("Use append(). [1.6]")
+    void appendvec (array_view<T> v) {
+        append (v.data(), v.size()*sizeof(T));
     }
 
     /// Type for storing the raw bits of the hash

@@ -36,29 +36,19 @@
 #include <cmath>
 #include <sstream>
 #include <limits>
-#include <boost/tokenizer.hpp>
 #include <boost/foreach.hpp>
 #include <boost/algorithm/string.hpp>
 
-#ifdef _WIN32
-// defining NOMINMAX to prevent problems with std::min/std::max
-// and std::numeric_limits<type>::min()/std::numeric_limits<type>::max()
-// when including windows.h
-#ifdef _MSC_VER
-# define WIN32_LEAN_AND_MEAN
-# define VC_EXTRALEAN
-# ifndef NOMINMAX
-#   define NOMINMAX
-# endif
-#endif
-#include <windows.h>
-#include <shellapi.h>
-#endif
-
+#include "OpenImageIO/platform.h"
 #include "OpenImageIO/dassert.h"
 #include "OpenImageIO/strutil.h"
 #include "OpenImageIO/ustring.h"
 #include "OpenImageIO/string_view.h"
+
+#ifdef _WIN32
+# include <shellapi.h>
+#endif
+
 
 
 OIIO_NAMESPACE_BEGIN
@@ -205,11 +195,10 @@ Strutil::get_rest_arguments (const std::string &str, std::string &base,
     }
 
     base = str.substr (0, mark_pos);
-
-    boost::char_separator<char> sep ("&");
     std::string rest = str.substr (mark_pos + 1);
-    boost::tokenizer<boost::char_separator<char> > rest_tokens (rest, sep);
-    BOOST_FOREACH (std::string keyval, rest_tokens) {
+    std::vector<std::string> rest_tokens;
+    Strutil::split (rest, rest_tokens, "&");
+    BOOST_FOREACH (const std::string &keyval, rest_tokens) {
         mark_pos = keyval.find_first_of ("=");
         if (mark_pos == std::string::npos)
             return false;
@@ -492,14 +481,51 @@ Strutil::join (const std::vector<std::string> &seq, string_view str)
 
 
 
+std::string
+Strutil::repeat (string_view str, int n)
+{
+    std::ostringstream out;
+    while (n-- > 0)
+        out << str;
+    return out.str();
+}
+
+
+
+std::string
+Strutil::replace (string_view str, string_view pattern,
+                  string_view replacement, bool global)
+{
+    std::string r;
+    while (1) {
+        size_t f = str.find (pattern);
+        if (f != str.npos) {
+            // Pattern found -- copy the part of str prior to the pattern,
+            // then copy the replacement, and skip str up to the part after
+            // the pattern and continue for another go at it.
+            r.append (str.data(), f);
+            r.append (replacement.data(), replacement.size());
+            str.remove_prefix (f + pattern.size());
+            if (global)
+                continue;   // Try for another match
+        }
+        // Pattern not found -- copy remaining string and we're done
+        r.append (str.data(), str.size());
+        break;
+    }
+    return r;
+}
+
+
+
 #ifdef _WIN32
 std::wstring
 Strutil::utf8_to_utf16 (string_view str)
 {
     std::wstring native;
     
-    native.resize(MultiByteToWideChar (CP_UTF8, 0, str.c_str(), -1, NULL, 0));
-    MultiByteToWideChar (CP_UTF8, 0, str.c_str(), -1, &native[0], (int)native.size());
+    native.resize(MultiByteToWideChar (CP_UTF8, 0, str.data(), str.length(), NULL, 0));
+    MultiByteToWideChar (CP_UTF8, 0, str.data(), str.length(), &native[0], (int)native.size());
 
     return native;
 }
@@ -511,8 +537,8 @@ Strutil::utf16_to_utf8 (const std::wstring& str)
 {
     std::string utf8;
 
-    utf8.resize(WideCharToMultiByte (CP_UTF8, 0, str.c_str(), -1, NULL, 0, NULL, NULL));
-    WideCharToMultiByte (CP_UTF8, 0, str.c_str(), -1, &utf8[0], (int)utf8.size(), NULL, NULL);
+    utf8.resize(WideCharToMultiByte (CP_UTF8, 0, str.data(), str.length(), NULL, 0, NULL, NULL));
+    WideCharToMultiByte (CP_UTF8, 0, str.data(), str.length(), &utf8[0], (int)utf8.size(), NULL, NULL);
 
     return utf8;
 }
@@ -634,14 +660,6 @@ Strutil::parse_float (string_view &str, float &val, bool eat)
     }
     val = v;
     return true;
-}
-
-
-
-bool
-Strutil::parse_string (string_view &str, string_view &val, bool eat)
-{
-    return parse_string (str, val, eat, DeleteQuotes);
 }
 
 
@@ -863,7 +881,7 @@ decode(uint32_t* state, uint32_t* codep, uint32_t byte)
 }
 
 void
-Strutil::utf8_to_unicode (string_view &str, std::vector<uint32_t> &uvec)
+Strutil::utf8_to_unicode (string_view str, std::vector<uint32_t> &uvec)
 {
     const char* begin = str.begin();
     const char* end = str.end();
@@ -874,5 +892,67 @@ Strutil::utf8_to_unicode (string_view &str, std::vector<uint32_t> &uvec)
             uvec.push_back(codepoint);
     }
 }
+
+
+
+/* base64 code is based upon: http://www.adp-gmbh.ch/cpp/common/base64.html
+   Copyright (C) 2004-2008 René Nyffenegger
+
+   This source code is provided 'as-is', without any express or implied
+   warranty. In no event will the author be held liable for any damages
+   arising from the use of this software.
+
+   Permission is granted to anyone to use this software for any purpose,
+   including commercial applications, and to alter it and redistribute it
+   freely, subject to the following restrictions:
+
+   1. The origin of this source code must not be misrepresented; you must not
+      claim that you wrote the original source code. If you use this source code
+      in a product, an acknowledgment in the product documentation would be
+      appreciated but is not required.
+   2. Altered source versions must be plainly marked as such, and must not be
+      misrepresented as being the original source code.
+   3. This notice may not be removed or altered from any source distribution.
+
+   René Nyffenegger rene.nyffenegger@adp-gmbh.ch
+*/
+std::string
+Strutil::base64_encode (string_view str)
+{
+    static const char *base64_chars =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string ret;
+    ret.reserve ((str.size() * 4 + 2)/ 3);
+    int i = 0;
+    unsigned char char_array_3[3];
+    unsigned char char_array_4[4];
+    while (str.size()) {
+        char_array_3[i++] = str.front();
+        str.remove_prefix (1);
+        if (i == 3) {
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+            for (int j = 0; j < 4; j++)
+                ret += base64_chars[char_array_4[j]];
+            i = 0;
+        }
+    }
+    if (i) {
+        for (int j = i; j < 3; j++)
+            char_array_3[j] = '\0';
+        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+        char_array_4[3] = char_array_3[2] & 0x3f;
+        for (int j = 0; j < i + 1; j++)
+            ret += base64_chars[char_array_4[j]];
+        while (i++ < 3)
+            ret += '=';
+    }
+    return ret;
+}
+
 
 OIIO_NAMESPACE_END

@@ -313,9 +313,8 @@ public:
     TextureSystem (void) { }
     virtual ~TextureSystem () { }
 
-    /// Close everything, free resources, start from scratch.
-    ///
-    virtual void clear () = 0;
+    OIIO_DEPRECATED("clear() was never implemented. Don't bother calling it. [1.7]")
+    virtual void clear () { }
 
     /// Set an attribute controlling the texture system.  Return true
     /// if the name and type were recognized and the attrib was set.
@@ -334,7 +333,11 @@ public:
     ///     int failure_retries : how many times to retry a read failure
     ///     int deduplicate : if nonzero, detect duplicate textures (default=1)
     ///     int gray_to_rgb : make 1-channel images fill RGB lookups
+    ///     int max_tile_channels : max channels to store all chans in a tile
     ///     string latlong_up : default "up" direction for latlong ("y")
+    ///     int flip_t : flip v coord for texture lookups?
+    ///     int max_errors_per_file : Limits how many errors to issue for
+    ///                               issue for each (default: 100)
     ///
     virtual bool attribute (string_view name, TypeDesc type, const void *val) = 0;
     // Shortcuts for common types
@@ -344,13 +347,14 @@ public:
     virtual bool attribute (string_view name, string_view val) = 0;
 
     /// Get the named attribute, store it in value.
-    virtual bool getattribute (string_view name, TypeDesc type, void *val) = 0;
+    virtual bool getattribute (string_view name,
+                               TypeDesc type, void *val) const = 0;
     // Shortcuts for common types
-    virtual bool getattribute (string_view name, int &val) = 0;
-    virtual bool getattribute (string_view name, float &val) = 0;
-    virtual bool getattribute (string_view name, double &val) = 0;
-    virtual bool getattribute (string_view name, char **val) = 0;
-    virtual bool getattribute (string_view name, std::string &val) = 0;
+    virtual bool getattribute (string_view name, int &val) const = 0;
+    virtual bool getattribute (string_view name, float &val) const = 0;
+    virtual bool getattribute (string_view name, double &val) const = 0;
+    virtual bool getattribute (string_view name, char **val) const = 0;
+    virtual bool getattribute (string_view name, std::string &val) const = 0;
 
     /// Define an opaque data type that allows us to have a pointer
     /// to certain per-thread information that the TextureSystem maintains.
@@ -585,7 +589,8 @@ public:
     virtual bool get_texture_info (TextureHandle *texture_handle,
                           Perthread *thread_info, int subimage,
                           ustring dataname, TypeDesc datatype, void *data) = 0;
-    /// DEPRECATED (1.6.2)
+
+    OIIO_DEPRECATED("Use get_texture_info variety that is passed a Perthread*. [1.6.2]")
     virtual bool get_texture_info (TextureHandle *texture_handle, int subimage,
                           ustring dataname, TypeDesc datatype, void *data) = 0;
 

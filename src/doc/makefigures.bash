@@ -37,6 +37,7 @@ ${OIIOTOOL} tahoe-small.jpg --noise:type=gaussian:mean=0:stddev=0.1 -o tahoe-gau
 ${OIIOTOOL} tahoe-small.jpg --noise:type=salt:portion=0.01:value=0:mono=1 -o tahoe-pepper.jpg
 ${OIIOTOOL} tahoe-small.jpg --blur 7x7 -o tahoe-blur.jpg
 ${OIIOTOOL} tahoe-pepper.jpg --median 3x3 -o tahoe-pepper-median.jpg
+${OIIOTOOL} tahoe-small.jpg --laplacian -mulc 2 -o tahoe-laplacian.jpg
 ${OIIOTOOL} --create 320x240 3 --text:x=25:y=50 "Hello, world" \
             --text:x=50:y=100:font="Arial Bold":color=1,0,0:size=30 "Go Big Red!" --tocolorspace sRGB -o text.jpg
 ${OIIOTOOL} tahoe-small.jpg --crop 100x120+35+40 \
@@ -47,5 +48,21 @@ ${OIIOTOOL} -create 320x240 4 -fill:color=.1,.5,.1 120x80+50+70 -rotate 30 -o pr
             -trim -ch R,G,B,A=1.0 -create 320x240 4 -fill:color=0.75,0.75,0.75,1 320x240 \
             -fill:color=1,1,1,1 318x238+1+1 -over -tocolorspace sRGB -o trim.jpg
 ${OIIOTOOL} --autocc tahoe-small.jpg --invert -o invert.jpg
+${OIIOTOOL} --pattern checker:color1=.1,.2,.1:color2=.2,.2,.2 320x240 3 \
+            --line:color=1,0,0 10,60,250,20,100,190 -d uint8 -o lines.png
+${OIIOTOOL} --pattern checker:color1=.1,.2,.1:color2=.2,.2,.2 320x240 3 \
+            --box:color=0,1,1,1 150,100,240,180 \
+            --box:color=0.5,0.5,0,0.5:fill=1 100,50,180,140 \
+            --colorconvert linear sRGB -d uint8 -o box.png
+
+${OIIOTOOL} --autocc --pattern constant:color=0.1,0.1,0.1 80x64 3 --text:x=8:y=54:size=40:font=DroidSerif Aai -o morphsource.jpg
+${OIIOTOOL} --autocc morphsource.jpg --dilate 3x3 -d uint8 -o dilate.jpg
+${OIIOTOOL} --autocc morphsource.jpg --erode 3x3 -d uint8 -o erode.jpg
+${OIIOTOOL} --autocc morphsource.jpg --erode 3x3 --dilate 3x3 -d uint8 -o morphopen.jpg
+${OIIOTOOL} --autocc morphsource.jpg --dilate 3x3 --erode 3x3 -d uint8 -o morphclose.jpg
+${OIIOTOOL} --autocc dilate.jpg erode.jpg -sub -d uint8 -o morphgradient.jpg
+${OIIOTOOL} --autocc morphsource.jpg morphopen.jpg -sub -d uint8 -o tophat.jpg
+${OIIOTOOL} --autocc morphclose.jpg morphsource.jpg -sub -d uint8 -o bottomhat.jpg
+
 #${OIIOTOOL} ../../../testsuite/oiiotool/tahoe-small.tif
 

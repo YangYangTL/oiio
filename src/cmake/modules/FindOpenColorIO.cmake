@@ -13,7 +13,6 @@
 include (FindPackageHandleStandardArgs)
 include (FindPackageMessage)
 
-MACRO(FindOpenColorIO)
     if (NOT OpenColorIO_FIND_QUIETLY)
         if (OCIO_PATH)
             message(STATUS "OCIO path explicitly specified: ${OCIO_PATH}")
@@ -25,13 +24,16 @@ MACRO(FindOpenColorIO)
             message(STATUS "OCIO LIBRARY_PATH explicitly specified: ${OCIO_LIBRARY_PATH}")
         endif()
     endif ()
-    FIND_PATH( OCIO_INCLUDES OpenColorIO/OpenColorIO.h
+    FIND_PATH(OCIO_INCLUDES
+        OpenColorIO.h
+        PATHS
         ${OCIO_INCLUDE_PATH}
         ${OCIO_PATH}/include/
         /usr/include
         /usr/local/include
         /sw/include
         /opt/local/include
+        PATH_SUFFIXES OpenColorIO
         DOC "The directory where OpenColorIO/OpenColorIO.h resides")
     FIND_LIBRARY(OCIO_LIBRARIES
         NAMES OCIO OpenColorIO
@@ -56,5 +58,4 @@ MACRO(FindOpenColorIO)
         set(OCIO_FOUND FALSE)
         message(STATUS "OCIO not found. Specify OCIO_PATH to locate it")
     endif()
-ENDMACRO()
 

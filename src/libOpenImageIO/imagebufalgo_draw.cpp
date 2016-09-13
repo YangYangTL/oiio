@@ -28,10 +28,6 @@
   (This is the Modified BSD License)
 */
 
-#include <boost/bind.hpp>
-#include <boost/shared_ptr.hpp>
-#include <boost/regex.hpp>
-
 #include <OpenEXR/half.h>
 
 #include <cmath>
@@ -57,12 +53,12 @@ OIIO_NAMESPACE_BEGIN
 
 template<typename T>
 static bool
-fill_ (ImageBuf &dst, const float *values, ROI roi=ROI(), int nthreads=1)
+fill_const_ (ImageBuf &dst, const float *values, ROI roi=ROI(), int nthreads=1)
 {
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind(fill_<T>, boost::ref(dst), values,
+            OIIO::bind(fill_const_<T>, OIIO::ref(dst), values,
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
         return true;
@@ -78,13 +74,13 @@ fill_ (ImageBuf &dst, const float *values, ROI roi=ROI(), int nthreads=1)
 
 template<typename T>
 static bool
-fill_ (ImageBuf &dst, const float *top, const float *bottom,
+fill_tb_ (ImageBuf &dst, const float *top, const float *bottom,
        ROI origroi, ROI roi=ROI(), int nthreads=1)
 {
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind(fill_<T>, boost::ref(dst), top, bottom,
+            OIIO::bind(fill_tb_<T>, OIIO::ref(dst), top, bottom,
                         origroi, _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
         return true;
@@ -103,14 +99,14 @@ fill_ (ImageBuf &dst, const float *top, const float *bottom,
 
 template<typename T>
 static bool
-fill_ (ImageBuf &dst, const float *topleft, const float *topright,
+fill_corners_ (ImageBuf &dst, const float *topleft, const float *topright,
        const float *bottomleft, const float *bottomright,
        ROI origroi, ROI roi=ROI(), int nthreads=1)
 {
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind(fill_<T>, boost::ref(dst), topleft, topright,
+            OIIO::bind(fill_corners_<T>, OIIO::ref(dst), topleft, topright,
                         bottomleft, bottomright,
                         origroi, _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
@@ -138,7 +134,7 @@ ImageBufAlgo::fill (ImageBuf &dst, const float *pixel, ROI roi, int nthreads)
     if (! IBAprep (roi, &dst))
         return false;
     bool ok;
-    OIIO_DISPATCH_TYPES (ok, "fill", fill_, dst.spec().format,
+    OIIO_DISPATCH_TYPES (ok, "fill", fill_const_, dst.spec().format,
                          dst, pixel, roi, nthreads);
     return ok;
 }
@@ -152,7 +148,7 @@ ImageBufAlgo::fill (ImageBuf &dst, const float *top, const float *bottom,
     if (! IBAprep (roi, &dst))
         return false;
     bool ok;
-    OIIO_DISPATCH_TYPES (ok, "fill", fill_, dst.spec().format,
+    OIIO_DISPATCH_TYPES (ok, "fill", fill_tb_, dst.spec().format,
                          dst, top, bottom, roi, roi, nthreads);
     return ok;
 }
@@ -168,7 +164,7 @@ ImageBufAlgo::fill (ImageBuf &dst, const float *topleft, const float *topright,
     if (! IBAprep (roi, &dst))
         return false;
     bool ok;
-    OIIO_DISPATCH_TYPES (ok, "fill", fill_, dst.spec().format,
+    OIIO_DISPATCH_TYPES (ok, "fill", fill_corners_, dst.spec().format,
                          dst, topleft, topright, bottomleft, bottomright,
                          roi, roi, nthreads);
     return ok;
@@ -183,6 +179,245 @@ ImageBufAlgo::zero (ImageBuf &dst, ROI roi, int nthreads)
     float *zero = ALLOCA(float,roi.chend);
     memset (zero, 0, roi.chend*sizeof(float));
     return fill (dst, zero, roi, nthreads);
+}
+
+
+
+template<typename T>
+static bool
+render_point_ (ImageBuf &dst, int x, int y,
+               array_view<const float> color, float alpha,
+               ROI roi, int nthreads)
+{
+    ImageBuf::Iterator<T> r (dst, x, y);
+    for (int c = roi.chbegin; c < roi.chend; ++c)
+        r[c] = color[c] + r[c] * (1.0f-alpha);  // "over"
+    return true;
+}
+
+
+
+bool
+ImageBufAlgo::render_point (ImageBuf &dst, int x, int y,
+                            array_view<const float> color,
+                            ROI roi, int nthreads)
+{
+    if (! IBAprep (roi, &dst))
+        return false;
+
+    if (int(color.size()) < roi.chend) {
+        dst.error ("Not enough channels for the color (needed %d)", roi.chend);
+        return false;   // Not enough color channels specified
+    }
+    if (x < roi.xbegin || x >= roi.xend || y < roi.ybegin || y >= roi.yend)
+        return true;   // outside of bounds
+    const ImageSpec &spec (dst.spec());
+
+    // Alpha: if the image's spec designates an alpha channel, use it if
+    // it's within the range specified by color. Otherwise, if color
+    // includes more values than the highest channel roi says we should
+    // modify, assume the first extra value is alpha. If all else fails,
+    // make the line opaque (alpha=1.0).
+    float alpha = 1.0f;
+    if (spec.alpha_channel >= 0 && spec.alpha_channel < int(color.size()))
+        alpha = color[spec.alpha_channel];
+    else if (int(color.size()) == roi.chend+1)
+        alpha = color[roi.chend];
+
+    bool ok;
+    OIIO_DISPATCH_TYPES (ok, "render_point", render_point_, dst.spec().format,
+                         dst, x, y, color, alpha, roi, nthreads);
+    return ok;
+}
+
+
+
+// Basic Bresenham 2D line drawing algorithm. Call func(x,y) for each x,y
+// along the line from (x1,y1) to (x2,y2). If skip_first is true, don't draw
+// the very first point.
+template<typename FUNC>
+static bool
+bresenham2d (FUNC func, int x1, int y1, int x2, int y2,
+             bool skip_first=false)
+{
+    // Basic Bresenham
+    int dx = abs(x2 - x1);
+    int dy = abs(y2 - y1);
+    int xinc = (x1 > x2) ? -1 : 1;
+    int yinc = (y1 > y2) ? -1 : 1;
+    if (dx >= dy) {
+        int dpr = dy << 1;
+        int dpru = dpr - (dx << 1);
+        int delta = dpr - dx;
+        for (; dx >= 0; --dx) {
+            if (skip_first)
+                skip_first = false;
+            else
+                func (x1, y1);
+            x1 += xinc;
+            if (delta > 0) {
+                y1 += yinc;
+                delta += dpru;
+            } else {
+                delta += dpr;
+            }
+        }
+    } else {
+        int dpr = dx << 1;
+        int dpru = dpr - (dy << 1);
+        int delta = dpr - dy;
+        for (; dy >= 0; dy--) {
+            if (skip_first)
+                skip_first = false;
+            else
+                func (x1, y1);
+            y1 += yinc;
+            if (delta > 0) {
+                x1 += xinc;
+                delta += dpru;
+            } else {
+                delta += dpr;
+            }
+        }
+    }
+    return true;
+}
+
+
+
+// Helper function that holds an IB::Iterator and composites a point into
+// it every time drawer(x,y) is called.
+template<typename T>
+struct IB_drawer {
+    IB_drawer (ImageBuf::Iterator<T,float> &r_,
+               array_view<const float> color_, float alpha_, ROI roi_)
+        : r(r_), color(color_), alpha(alpha_), roi(roi_) {}
+
+    void operator() (int x, int y) {
+        r.pos (x, y);
+        if (r.valid())
+            for (int c = roi.chbegin; c < roi.chend; ++c)
+                r[c] = color[c] + r[c] * (1.0f-alpha);  // "over"
+    }
+
+    ImageBuf::Iterator<T,float> &r;
+    array_view<const float> color;
+    float alpha;
+    ROI roi;
+};
+
+
+
+template<typename T>
+static bool
+render_line_ (ImageBuf &dst, int x1, int y1, int x2, int y2,
+              array_view<const float> color, float alpha, bool skip_first,
+              ROI roi, int nthreads)
+{
+    ImageBuf::Iterator<T> r (dst, roi);
+    IB_drawer<T> draw (r, color, alpha, roi);
+    bresenham2d (draw, x1, y1, x2, y2, skip_first);
+    return true;
+}
+
+
+
+bool
+ImageBufAlgo::render_line (ImageBuf &dst, int x1, int y1, int x2, int y2,
+                           array_view<const float> color,
+                           bool skip_first_point,
+                           ROI roi, int nthreads)
+{
+    if (! IBAprep (roi, &dst))
+        return false;
+
+    if (int(color.size()) < roi.chend) {
+        dst.error ("Not enough channels for the color (needed %d)", roi.chend);
+        return false;   // Not enough color channels specified
+    }
+    const ImageSpec &spec (dst.spec());
+
+    // Alpha: if the image's spec designates an alpha channel, use it if
+    // it's within the range specified by color. Otherwise, if color
+    // includes more values than the highest channel roi says we should
+    // modify, assume the first extra value is alpha. If all else fails,
+    // make the line opaque (alpha=1.0).
+    float alpha = 1.0f;
+    if (spec.alpha_channel >= 0 && spec.alpha_channel < int(color.size()))
+        alpha = color[spec.alpha_channel];
+    else if (int(color.size()) == roi.chend+1)
+        alpha = color[roi.chend];
+
+    bool ok;
+    OIIO_DISPATCH_TYPES (ok, "render_line", render_line_, dst.spec().format,
+                         dst, x1, y1, x2, y2, color, alpha, skip_first_point,
+                         roi, nthreads);
+    return ok;
+}
+
+
+
+template<typename T>
+static bool
+render_box_ (ImageBuf &dst, array_view<const float> color,
+             ROI roi=ROI(), int nthreads=1)
+{
+    if (nthreads != 1 && roi.npixels() >= 1000) {
+        // Lots of pixels and request for multi threads? Parallelize.
+        ImageBufAlgo::parallel_image (
+            OIIO::bind(render_box_<T>, OIIO::ref(dst), color,
+                        _1 /*roi*/, 1 /*nthreads*/),
+            roi, nthreads);
+        return true;
+    }
+
+    // Serial case
+    float alpha = 1.0f;
+    if (dst.spec().alpha_channel >= 0 && dst.spec().alpha_channel < int(color.size()))
+        alpha = color[dst.spec().alpha_channel];
+    else if (int(color.size()) == roi.chend+1)
+        alpha = color[roi.chend];
+
+    if (alpha == 1.0f) {
+        for (ImageBuf::Iterator<T> r (dst, roi);  !r.done();  ++r)
+            for (int c = roi.chbegin;  c < roi.chend;  ++c)
+                r[c] = color[c];
+    } else {
+        for (ImageBuf::Iterator<T> r (dst, roi);  !r.done();  ++r)
+            for (int c = roi.chbegin;  c < roi.chend;  ++c)
+                r[c] = color[c] + r[c] * (1.0f-alpha);  // "over"
+    }
+    return true;
+}
+
+
+
+bool
+ImageBufAlgo::render_box (ImageBuf &dst, int x1, int y1, int x2, int y2,
+                          array_view<const float> color, bool fill,
+                          ROI roi, int nthreads)
+{
+    if (! IBAprep (roi, &dst))
+        return false;
+    if (int(color.size()) < roi.chend) {
+        dst.error ("Not enough channels for the color (needed %d)", roi.chend);
+        return false;   // Not enough color channels specified
+    }
+
+    // Filled case
+    if (fill) {
+        roi = roi_intersection (roi, ROI(x1, x2+1, y1, y2+1, 0, 1, 0, roi.chend));
+        bool ok;
+        OIIO_DISPATCH_TYPES (ok, "render_box", render_box_, dst.spec().format,
+                             dst, color, roi, nthreads);
+        return ok;
+    }
+
+    // Unfilled case: use IBA::render_line
+    return ImageBufAlgo::render_line (dst, x1, y1, x2, y1, color,true, roi, nthreads)
+        && ImageBufAlgo::render_line (dst, x2, y1, x2, y2, color,true, roi, nthreads)
+        && ImageBufAlgo::render_line (dst, x2, y2, x1, y2, color,true, roi, nthreads)
+        && ImageBufAlgo::render_line (dst, x1, y2, x1, y1, color,true, roi, nthreads);
 }
 
 
@@ -205,7 +440,7 @@ checker_ (ImageBuf &dst, Dim3 size,
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind(checker_<T>, boost::ref(dst),
+            OIIO::bind(checker_<T>, OIIO::ref(dst),
                         size, color1, color2, offset,
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
@@ -288,7 +523,7 @@ noise_uniform_ (ImageBuf &dst, float min, float max, bool mono,
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind(noise_uniform_<T>, boost::ref(dst),
+            OIIO::bind(noise_uniform_<T>, OIIO::ref(dst),
                         min, max, mono, seed,
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
@@ -318,7 +553,7 @@ noise_gaussian_ (ImageBuf &dst, float mean, float stddev, bool mono,
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind(noise_gaussian_<T>, boost::ref(dst),
+            OIIO::bind(noise_gaussian_<T>, OIIO::ref(dst),
                         mean, stddev, mono, seed,
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
@@ -348,7 +583,7 @@ noise_salt_ (ImageBuf &dst, float saltval, float saltportion, bool mono,
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind(noise_salt_<T>, boost::ref(dst),
+            OIIO::bind(noise_salt_<T>, OIIO::ref(dst),
                         saltval, saltportion, mono, seed,
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);

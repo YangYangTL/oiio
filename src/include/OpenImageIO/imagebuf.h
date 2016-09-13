@@ -503,7 +503,7 @@ public:
                      stride_t ystride=AutoStride,
                      stride_t zstride=AutoStride);
 
-    /// DEPRECATED (1.6) -- use get_pixels(ROI, ...) instead.
+    OIIO_DEPRECATED("Use get_pixels(ROI, ...) instead. [1.6]")
     bool get_pixel_channels (int xbegin, int xend, int ybegin, int yend,
                              int zbegin, int zend, int chbegin, int chend,
                              TypeDesc format, void *result,
@@ -511,7 +511,7 @@ public:
                              stride_t ystride=AutoStride,
                              stride_t zstride=AutoStride) const;
 
-    /// DEPRECATED (1.6) -- use get_pixels(ROI, ...) instead.
+    OIIO_DEPRECATED("Use get_pixels(ROI, ...) instead. [1.6]")
     bool get_pixels (int xbegin, int xend, int ybegin, int yend,
                      int zbegin, int zend,
                      TypeDesc format, void *result,
@@ -519,16 +519,16 @@ public:
                      stride_t ystride=AutoStride,
                      stride_t zstride=AutoStride) const;
 
-    /// DEPRECATED (1.6) -- use get_pixels(ROI, ...) instead.
     template<typename T>
+    OIIO_DEPRECATED("Use get_pixels(ROI, ...) instead. [1.6]")
     bool get_pixel_channels (int xbegin, int xend, int ybegin, int yend,
                              int zbegin, int zend, int chbegin, int chend,
                              T *result, stride_t xstride=AutoStride,
                              stride_t ystride=AutoStride,
                              stride_t zstride=AutoStride) const;
 
-    /// DEPRECATED (1.6) -- use get_pixels(ROI, ...) instead.
     template<typename T>
+    OIIO_DEPRECATED("Use get_pixels(ROI, ...) instead. [1.6]")
     bool get_pixels (int xbegin, int xend, int ybegin, int yend,
                      int zbegin, int zend, T *result,
                      stride_t xstride=AutoStride, stride_t ystride=AutoStride,
@@ -539,8 +539,8 @@ public:
                                    xstride, ystride, zstride);
     }
 
-    /// DEPRECATED (1.6) -- use get_pixels(ROI, ...) instead.
     template<typename T>
+    OIIO_DEPRECATED("Use get_pixels(ROI, ...) instead. [1.6]")
     bool get_pixels (int xbegin_, int xend_, int ybegin_, int yend_,
                       int zbegin_, int zend_,
                       std::vector<T> &result) const
@@ -614,6 +614,10 @@ public:
     /// Does NOT change the channels of the spec, regardless of newroi.
     void set_roi_full (const ROI &newroi);
 
+    /// Is the specified roi completely contained in the data window of
+    /// this ImageBuf?
+    bool contains_roi (ROI roi) const;
+
     bool pixels_valid (void) const;
 
     TypeDesc pixeltype () const;
@@ -645,6 +649,10 @@ public:
     /// aren't local.
     void *pixeladdr (int x, int y, int z);
 
+    /// Return the index of pixel (x,y,z). If check_range is true, return
+    /// -1 for an invalid coordinate that is not within the data window.
+    int pixelindex (int x, int y, int z, bool check_range=false) const;
+
     /// Does this ImageBuf store deep data?
     bool deep () const;
 
@@ -653,11 +661,11 @@ public:
     /// range or has no deep samples.
     int deep_samples (int x, int y, int z=0) const;
 
-    /// Return a pointer to the raw array of deep data samples for
-    /// channel c of pixel (x,y,z).  Return NULL if the pixel
-    /// coordinates or channel number are out of range, if the
-    /// pixel/channel has no deep samples, or if the image is not deep.
-    const void *deep_pixel_ptr (int x, int y, int z, int c) const;
+    /// Return a pointer to the raw data of pixel (x,y,z), channel c, sample
+    /// s. Return NULL if the pixel coordinates or channel number are out of
+    /// range, if the pixel/channel has no deep samples, or if the image is
+    /// not deep.
+    const void *deep_pixel_ptr (int x, int y, int z, int c, int s=0) const;
 
     /// Return the value (as a float) of sample s of channel c of pixel
     /// (x,y,z).  Return 0.0 if not a deep image or if the pixel
@@ -671,18 +679,37 @@ public:
     /// Set the number of deep samples for a particular pixel.
     void set_deep_samples (int x, int y, int z, int nsamples);
 
+    /// Set the number of deep samples for a particular pixel.
+    void deep_insert_samples (int x, int y, int z, int samplepos, int nsamples);
+
+    /// Set the number of deep samples for a particular pixel.
+    void deep_erase_samples (int x, int y, int z, int samplepos, int nsamples);
+
     /// Set deep sample value within a pixel, as a float.
     void set_deep_value (int x, int y, int z, int c, int s, float value);
     /// Set deep sample value within a pixel, as a uint32.
+    void set_deep_value (int x, int y, int z, int c, int s, uint32_t value);
+
+    OIIO_DEPRECATED("Use set_deep_value() [1.7]")
     void set_deep_value_uint (int x, int y, int z, int c, int s, uint32_t value);
 
     /// Allocate all the deep samples, called after deepdata()->nsamples
     /// is set.
+    OIIO_DEPRECATED("No longer necessary to call deep_alloc [1.7]")
     void deep_alloc ();
 
     /// Retrieve the "deep" data.
     DeepData *deepdata ();
     const DeepData *deepdata () const;
+
+    /// Set the current thread-spawning policy: the maximum number of
+    /// threads that may be spawned by ImagBuf internals. A value of 1
+    /// means all work will be done by the calling thread; 0 means to use
+    /// the global OIIO::attribute("threads") value.
+    void threads (int n) const;
+
+    /// Retrieve the current thread-spawning policy of this ImageBuf.
+    int threads () const;
 
     friend class IteratorBase;
 
@@ -856,7 +883,7 @@ public:
 
         /// Increment to the next pixel in the region.
         ///
-        void operator++ () {
+        OIIO_FORCEINLINE void operator++ () {
             if (++m_x <  m_rng_xend) {
                 // Special case: we only incremented x, didn't change y
                 // or z, and the previous position was within the data
@@ -960,15 +987,13 @@ public:
         // Helper called by pos(), but ONLY for the case where we are
         // moving from an existing pixel to the next spot in +x.
         // Note: called *after* m_x was incremented!
-        void pos_xincr () {
+        OIIO_FORCEINLINE void pos_xincr () {
             DASSERT (m_exists && m_valid);   // precondition
             DASSERT (valid(m_x,m_y,m_z));    // should be true by definition
-            bool e = (m_x < m_img_xend);
+            m_proxydata += m_pixel_bytes;
             if (m_localpixels) {
-                if (e)
-                    // Haven't run off the end, just increment
-                    m_proxydata += m_pixel_bytes;
-                else {
+                if (OIIO_UNLIKELY(m_x >= m_img_xend)) {
+                    // Ran off the end of the row
                     m_exists = false;
                     if (m_wrap == WrapBlack) {
                         m_proxydata = (char *)m_ib->blackpixel();
@@ -984,10 +1009,9 @@ public:
                 m_proxydata = NULL;
             } else {
                 // Cached image
-                if (e && m_x < m_tilexend && m_tile)
-                    // Haven't crossed a tile boundary, don't retile!
-                    m_proxydata += m_pixel_bytes;
-                else {
+                bool e = m_x < m_img_xend;
+                if (OIIO_UNLIKELY( !(e && m_x < m_tilexend && m_tile))) {
+                    // Crossed a tile boundary
                     m_proxydata = (char *)m_ib->retile (m_x, m_y, m_z, m_tile,
                                     m_tilexbegin, m_tileybegin, m_tilezbegin,
                                     m_tilexend, e, m_wrap);
@@ -1132,6 +1156,9 @@ public:
         USERT deep_value (int c, int s) const {
             return convert_type<float,USERT>(m_ib->deep_value (m_x, m_y, m_z, c, s));
         }
+        uint32_t deep_value_uint (int c, int s) const {
+            return m_ib->deep_value_uint (m_x, m_y, m_z, c, s);
+        }
 
         /// Set the deep data value of sample s of channel c. (Only use this
         /// if deep_alloc() has been called.)
@@ -1139,7 +1166,7 @@ public:
             return const_cast<ImageBuf*>(m_ib)->set_deep_value (m_x, m_y, m_z, c, s, value);
         }
         void set_deep_value (int c, int s, uint32_t value) {
-            return const_cast<ImageBuf*>(m_ib)->set_deep_value_uint (m_x, m_y, m_z, c, s, value);
+            return const_cast<ImageBuf*>(m_ib)->set_deep_value (m_x, m_y, m_z, c, s, value);
         }
 
     };
@@ -1227,6 +1254,9 @@ public:
         USERT deep_value (int c, int s) const {
             return convert_type<float,USERT>(m_ib->deep_value (m_x, m_y, m_z, c, s));
         }
+        uint32_t deep_value_uint (int c, int s) const {
+            return m_ib->deep_value_uint (m_x, m_y, m_z, c, s);
+        }
     };
 
 
@@ -1235,12 +1265,6 @@ protected:
 
     ImageBufImpl * impl () { return m_impl; }
     const ImageBufImpl * impl () const { return m_impl; }
-
-    // Copy src's pixels into *this.  Pixels must already be local
-    // (either owned or wrapped) and the resolution and number of
-    // channels must match src.  Data type is allowed to be different,
-    // however, with automatic conversion upon copy.
-    void copy_from (const ImageBuf &src);
 
     // Reset the ImageCache::Tile * to reserve and point to the correct
     // tile for the given pixel, and return the ptr to the actual pixel

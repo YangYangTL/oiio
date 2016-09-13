@@ -35,10 +35,13 @@
 #include <OpenEXR/ImathFun.h>
 
 #include <boost/scoped_array.hpp>
+#include <boost/thread.hpp>
+#include <boost/thread/tss.hpp>
 
 #include "OpenImageIO/dassert.h"
 #include "OpenImageIO/typedesc.h"
 #include "OpenImageIO/strutil.h"
+#include "OpenImageIO/sysutil.h"
 #include "OpenImageIO/fmath.h"
 #include "OpenImageIO/thread.h"
 #include "OpenImageIO/hash.h"
@@ -50,23 +53,44 @@ OIIO_NAMESPACE_BEGIN
 // Global private data
 namespace pvt {
 recursive_mutex imageio_mutex;
-atomic_int oiio_threads (boost::thread::hardware_concurrency());
+atomic_int oiio_threads (Sysutil::hardware_concurrency());
+atomic_int oiio_exr_threads (Sysutil::hardware_concurrency());
 atomic_int oiio_read_chunk (256);
+int tiff_half (0);
 ustring plugin_searchpath (OIIO_DEFAULT_PLUGIN_SEARCHPATH);
 std::string format_list;   // comma-separated list of all formats
 std::string extension_list;   // list of all extensions for all formats
+std::string library_list;   // list of all libraries for all formats
+}
+
+using namespace pvt;
+
+
+namespace {
+// Hidden global OIIO data.
+static spin_mutex attrib_mutex;
+static const int maxthreads = 256;   // reasonable maximum for sanity check
+const char *oiio_debug_env = getenv("OPENIMAGEIO_DEBUG");
+#ifdef NDEBUG
+int print_debug (oiio_debug_env ? atoi(oiio_debug_env) : 0);
+#else
+int print_debug (oiio_debug_env ? atoi(oiio_debug_env) : 1);
+#endif
+};
+
+
+
+int
+openimageio_version ()
+{
+    return OIIO_VERSION;
 }
 
 
 
-using namespace pvt;
-
-namespace {
-
-
 // To avoid thread oddities, we have the storage area buffering error
 // messages for seterror()/geterror() be thread-specific.
-static thread_specific_ptr<std::string> thread_error_msg;
+static boost::thread_specific_ptr<std::string> thread_error_msg;
 
 // Return a reference to the string for this thread's error messages,
 // creating it if none exists for this thread thus far.
@@ -81,16 +105,6 @@ error_msg ()
     return *e;
 }
 
-} // end anon namespace
-
-
-
-
-int
-openimageio_version ()
-{
-    return OIIO_VERSION;
-}
 
 
 
@@ -99,7 +113,6 @@ openimageio_version ()
 void
 pvt::seterror (const std::string& message)
 {
-    recursive_lock_guard lock (pvt::imageio_mutex);
     error_msg() = message;
 }
 
@@ -108,7 +121,6 @@ pvt::seterror (const std::string& message)
 std::string
 geterror ()
 {
-    recursive_lock_guard lock (pvt::imageio_mutex);
     std::string e = error_msg();
     error_msg().clear ();
     return e;
@@ -116,14 +128,15 @@ geterror ()
 
 
 
-namespace {
-
-// Private global OIIO data.
-
-static spin_mutex attrib_mutex;
-static const int maxthreads = 64;   // reasonable maximum for sanity check
-
-};
+void
+pvt::debugmsg_ (string_view message)
+{
+    recursive_lock_guard lock (pvt::imageio_mutex);
+    if (print_debug) {
+        std::cerr << "OIIO DEBUG: " << message 
+                  << (message.back() == '\n' ? "" : "\n");
+    }
+}
 
 
 
@@ -133,7 +146,7 @@ attribute (string_view name, TypeDesc type, const void *val)
     if (name == "threads" && type == TypeDesc::TypeInt) {
         int ot = Imath::clamp (*(const int *)val, 0, maxthreads);
         if (ot == 0)
-            ot = boost::thread::hardware_concurrency();
+            ot = Sysutil::hardware_concurrency();
         oiio_threads = ot;
         return true;
     }
@@ -144,6 +157,18 @@ attribute (string_view name, TypeDesc type, const void *val)
     }
     if (name == "plugin_searchpath" && type == TypeDesc::TypeString) {
         plugin_searchpath = ustring (*(const char **)val);
+        return true;
+    }
+    if (name == "exr_threads" && type == TypeDesc::TypeInt) {
+        oiio_exr_threads = Imath::clamp (*(const int *)val, 0, maxthreads);
+        return true;
+    }
+    if (name == "tiff:half" && type == TypeDesc::TypeInt) {
+        tiff_half = *(const int *)val;
+        return true;
+    }
+    if (name == "debug" && type == TypeDesc::TypeInt) {
+        print_debug = *(const int *)val;
         return true;
     }
     return false;
@@ -177,6 +202,24 @@ getattribute (string_view name, TypeDesc type, void *val)
         if (extension_list.empty())
             pvt::catalog_all_plugins (plugin_searchpath.string());
         *(ustring *)val = ustring(extension_list);
+        return true;
+    }
+    if (name == "library_list" && type == TypeDesc::TypeString) {
+        if (library_list.empty())
+            pvt::catalog_all_plugins (plugin_searchpath.string());
+        *(ustring *)val = ustring(library_list);
+        return true;
+    }
+    if (name == "exr_threads" && type == TypeDesc::TypeInt) {
+        *(int *)val = oiio_exr_threads;
+        return true;
+    }
+    if (name == "tiff:half" && type == TypeDesc::TypeInt) {
+        *(int *)val = tiff_half;
+        return true;
+    }
+    if (name == "debug" && type == TypeDesc::TypeInt) {
+        *(int *)val = print_debug;
         return true;
     }
     return false;
@@ -402,18 +445,6 @@ pvt::convert_from_float (const float *src, void *dst, size_t nvals,
 }
 
 
-// DEPRECATED (1.4)
-const void *
-pvt::convert_from_float (const float *src, void *dst, size_t nvals,
-                         long long quant_black, long long quant_white,
-                         long long quant_min, long long quant_max,
-                         TypeDesc format)
-{
-    return convert_from_float (src, dst, nvals, quant_min, quant_max, format);
-}
-
-
-
 const void *
 pvt::parallel_convert_from_float (const float *src, void *dst, size_t nvals,
                                   TypeDesc format, int nthreads)
@@ -448,19 +479,6 @@ pvt::parallel_convert_from_float (const float *src, void *dst, size_t nvals,
     }
     threads.join_all ();
     return dst;
-}
-
-
-
-// DEPRECATED (1.4)
-const void *
-pvt::parallel_convert_from_float (const float *src, void *dst,
-                                  size_t nvals,
-                                  long long quant_black, long long quant_white,
-                                  long long quant_min, long long quant_max,
-                                  TypeDesc format, int nthreads)
-{
-    return parallel_convert_from_float (src, dst, nvals, format, nthreads);
 }
 
 
@@ -516,17 +534,6 @@ convert_types (TypeDesc src_type, const void *src,
 
 
 
-// Deprecated version -- keep for link compatibiity
-bool
-convert_types (TypeDesc src_type, const void *src, 
-               TypeDesc dst_type, void *dst, int n,
-               int alpha_channel, int z_channel)
-{
-    return convert_types (src_type, src, dst_type, dst, n);
-}
-
-
-
 bool
 convert_image (int nchannels, int width, int height, int depth,
                const void *src, TypeDesc src_type,
@@ -563,14 +570,12 @@ convert_image (int nchannels, int width, int height, int depth,
                 // unit.  (Note that within convert_types, a memcpy will
                 // be used if the formats are identical.)
                 result &= convert_types (src_type, f, dst_type, t,
-                                         nchannels*width,
-                                         alpha_channel, z_channel);
+                                         nchannels*width);
             } else {
                 // General case -- anything goes with strides.
                 for (int x = 0;  x < width;  ++x) {
                     result &= convert_types (src_type, f, dst_type, t,
-                                             nchannels,
-                                             alpha_channel, z_channel);
+                                             nchannels);
                     f += src_xstride;
                     t += dst_xstride;
                 }

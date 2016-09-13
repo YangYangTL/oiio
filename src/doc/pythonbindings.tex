@@ -43,7 +43,7 @@ These names are also exported to the {\cf OpenImageIO} namespace.
 \apiitem{AGGREGATE}
 The {\cf AGGREGATE} enum corresponds to the C++ {\cf TypeDesc::AGGREGATE} and
 contains the following values: \\
-{\cf SCALAR VEC2 VEC3 VEC4 MATRIX44} \\
+{\cf SCALAR VEC2 VEC3 VEC4 MATRIX33 MATRIX44} \\
 These names are also exported to the {\cf OpenImageIO} namespace.
 \apiend
 
@@ -95,6 +95,7 @@ TypeDesc.TypePoint() \\
 TypeDesc.TypeVector() \\
 TypeDesc.TypeNormal() \\
 TypeDesc.TypeMatrix() \\
+TypeDesc.TypeMatrix33() \\
 TypeDesc.TypeTimeCode() \\
 TypeDesc.TypeKeyCode() \\
 TypeDesc.TypeFloat4()}
@@ -359,8 +360,7 @@ image, of {\cf False} if it is an ordinary image.
 \apiitem{ImageSpec.{\ce set_format} (basetype) \\
 ImageSpec.{\ce set_format} (typedesc)}
 Given a {\cf BASETYPE} or a \TypeDesc, sets the {\cf format} field and
-also sets all the {\cf quantize} fields to the defaults for the given
-data format.
+clear any per-channel formats in {\cf channelformats}.
 
 \noindent Example:
 \begin{code}
@@ -433,17 +433,17 @@ data (for aggregate types or arrays, pass multiple values as a tuple).
 \end{code}
 \apiend
 
-\apiitem{ImageSpec.{\ce get_attribute} (name) \\
-ImageSpec.{\ce get_attribute} (name, typedesc)}
+\apiitem{ImageSpec.{\ce getattribute} (name) \\
+ImageSpec.{\ce getattribute} (name, typedesc)}
 Retrieves a named metadata value from {\cf extra_attribs}.  The generic
-{\cf get_attribute()} function returns it regardless of type, or {\cf None}
+{\cf getattribute()} function returns it regardless of type, or {\cf None}
 if the attribute does not exist.  The typed variety will only succeed
 if the attribute is actually of that type specified.
 
 \noindent Example:
 \begin{code}
-    foo = s.get_attribute ("foo")   # None if not found
-    foo = s.get_attribute ("foo", oiio.FLOAT)  # None if not found AND float
+    foo = s.getattribute ("foo")   # None if not found
+    foo = s.getattribute ("foo", oiio.FLOAT)  # None if not found AND float
 \end{code}
 \apiend
 
@@ -579,7 +579,6 @@ def poor_mans_iinfo (filename) :
 
 \section{DeepData}
 \label{sec:pythondeepdata}
-\NEW % 1.6
 
 The \DeepData class describing ``deep'' image data (multiple depth
 sample per pixel), which is explained in deail in
@@ -590,11 +589,12 @@ Constructs a \DeepData object. It needs to have its {\cf init()} and
 {\cf alloc()} methods called before it can hold any meaningful data.
 \apiend
 
-\apiitem{DeepData.{\ce init} (npixels, nchannels, pixeltypes)}
+\apiitem{DeepData.{\ce init} (npixels, nchannels, channeltypes, channelnames)}
 Initializes this \DeepData to hold {\cf npixels} total pixels, with
 {\cf nchannels} color channels. The data types of the channels are
-described by {\cf pixeltypes}, a tuple of \TypeDesc values (one per
-channel). After calling {\cf init}, you still need to set the number of
+described by {\cf channeltypes}, a tuple of \TypeDesc values (one per
+channel), and the names are provided in a tuple of {\cf string}s
+{\cf channelnames}. After calling {\cf init}, you still need to set the number of
 samples for each pixel (using {\cf set_nsamples}) and then call {\cf alloc()}
 to actually allocate the sample memory.
 \apiend
@@ -608,19 +608,41 @@ collection of deep data.
 This {\cf int} field constains the number of channels.
 \apiend
 
-\apiitem{DeepData.{\ce set_nsamples} (pixel, nsamples) \\
-int DeepData.{\ce get_nsamples} (pixel)}
+
+\apiitem{string DeepData.{\ce channelname} (c)}
+\NEW % 1.7
+Retrieve the name of channel {\cf c}.
+\apiend
+
+\apiitem{TypeDesc DeepData.{\ce channeltype} (c)}
+Retrieve the data type of channel {\cf c}.
+\apiend
+
+\apiitem{int DeepData.{\ce channelsize} (c)}
+Retrieve the size (in bytes) of one datum of channel {\cf c}.
+\apiend
+
+\apiitem{int DeepData.{\ce samplesize} ()}
+Retrieve the packed size (in bytes) of all channels of one sample.
+\apiend
+
+
+\apiitem{DeepData.{\ce set_samples} (pixel, nsamples) \\
+int DeepData.{\ce samples} (pixel)}
 Set or get the number of samples for a given pixel (specified by integer
 index).
 \apiend
 
-\apiitem{DeepData.{\ce alloc()}}
-After {\cf set_nsamples} has been called for each pixel, {\cf alloc()}
-is called to allocate the sample data.
+\apiitem{DeepData.{\ce insert_samples} (pixel, samplepos, n) \\
+int DeepData.{\ce erase_samples} (pixel, samplepos, n)}
+\NEW % 1.7
+Insert or erase \emph{n} samples starting at the given position of an
+indexed pixel.
 \apiend
 
-\apiitem{DeepData.{\ce set_deep_value} (pixel, channel, sample, value)}
-Set specific float value of a given pixel, channel, and
+\apiitem{DeepData.{\ce set_deep_value} (pixel, channel, sample, value) \\
+DeepData.{\ce set_deep_value_uint} (pixel, channel, sample, value)}
+Set specific float or unsigned int value of a given pixel, channel, and
 sample index.
 \apiend
 
@@ -630,6 +652,42 @@ Retrieve the specific value of a given pixel,
 channel, and sample index (for float or uint channels, respectively).
 \apiend
 
+\apiitem{DeepData.{\ce copy_deep_sample} (pixel, sample, src, srcpixel, srcsample)}
+\NEW % 1.7
+Copy a deep sample from \DeepData {\cf src} into this \DeepData.
+\apiend
+
+\apiitem{DeepData.{\ce copy_deep_pixel} (pixel, src, srcpixel)}
+\NEW % 1.7
+Copy a deep pixel from \DeepData {\cf src} into this \DeepData.
+\apiend
+
+\apiitem{DeepData.{\ce split} (pixel, depth)}
+\NEW % 1.7
+Split any samples of the pixel that cross {\cf depth}.
+\apiend
+
+\apiitem{DeepData.{\ce sort} (pixel)}
+\NEW % 1.7
+Sort the samples of the pixel by their Z depth.
+\apiend
+
+\apiitem{DeepData.{\ce merge_overlaps} (pixel)}
+\NEW % 1.7
+Merge any adjacent samples in the pixel that exactly overlap in $z$
+range. This is only useful if the pixel has previously been split at
+all sample starts and ends, and sorted by depth.
+\apiend
+
+\apiitem{DeepData.{\ce merge_deep_pixels} (pixel, src, srcpixel)}
+\NEW % 1.7
+Merge the samples of {\cf src}'s pixel into this \DeepData's pixel.
+\apiend
+
+\apiitem{DeepData.{\ce occlusion_cull} (pixel)}
+\NEW % 1.7
+Eliminate any samples beyond an opaque sample.
+\apiend
 
 
 
@@ -724,14 +782,15 @@ specified subimage or MIP level).
 \end{code}
 \apiend
 
-\apiitem{array ImageInput.{\ce read_image} (type=OpenImageIO.UNKNOWN)}
+\apiitem{array ImageInput.{\ce read_image} (type=OpenImageIO.FLOAT) \\
+array ImageInput.{\ce read_image} (chbegin, chend, type=OpenImageIO.FLOAT)}
 Read the entire image and return the pixels as an array of
 $\mathit{width} \times \mathit{height} \times \mathit{depth} \times \mathit{nchannels}$
-values (or {\cf None} if an error occurred).  The array will be of the type
-specified by the {\cf TypeDesc} or {\cf BASETYPE} argument, or  if the
-argument is missing or is {\cf TypeDesc(oiio.UNKNOWN)}, it will choose an
-appropriate data type that is the ``smallest'' type that can hold the actual
-types in the file.
+values (or {\cf None} if an error occurred). The array will be of the type
+specified by the {\cf TypeDesc} or {\cf BASETYPE} argument (by default,
+{\cf FLOAT}). If {\cf type} is {\cf OpenImageIO.UNKNOWN}, an
+array of {\cf unsigned char} will be returned containing the raw data in
+its native format. The call may optionally specify a subset of channels.
 
 \noindent Example:
 \begin{code}
@@ -744,13 +803,14 @@ types in the file.
 \end{code}
 \apiend
 
-\apiitem{array ImageInput.{\ce read_scanline} (y, z, type=OpenImageIO.UNKNOWN)}
+\apiitem{array ImageInput.{\ce read_scanline} (y, z, type=OpenImageIO.FLOAT)}
 Read scanline number {\cf y} from depth plane {\cf z} from the open file,
 returning it as an array of $\mathit{width} \times \mathit{nchannels}$
 values (or {\cf None} if an error occurred). The array will be of the type
-specified by the {\cf TypeDesc} or {\cf BASETYPE} argument, or if the
-argument is missing or is {\cf TypeDesc(oiio.UNKNOWN)}, it will choose an
-appropriate data type.
+specified by the {\cf TypeDesc} or {\cf BASETYPE} argument (by default,
+{\cf FLOAT}). If {\cf type} is {\cf OpenImageIO.UNKNOWN}, an
+array of {\cf unsigned char} will be returned containing the raw data in
+its native format.
 
 \noindent Example:
 \begin{code}
@@ -766,14 +826,15 @@ appropriate data type.
 \end{code}
 \apiend
 
-\apiitem{array ImageInput.{\ce read_tile} (x, y, z, type=OpenImageIO.UNKNOWN)}
+\apiitem{array ImageInput.{\ce read_tile} (x, y, z, type=OpenImageIO.FLOAT)}
 Read the tile whose upper left corner is pixel {\cf (x,y,z)} from the open
 file, returning it as an array of
 $\mathit{width} \times \mathit{height} \times \mathit{depth} \times \mathit{nchannels}$
 values (or {\cf None} if an error occurred). The array will be of the type
-specified by the {\cf TypeDesc} or {\cf BASETYPE} argument, or if the
-argument is missing or {\cf TypeDesc(oiio.UNKNOWN)}, it will choose an
-appropriate data type.
+specified by the {\cf TypeDesc} or {\cf BASETYPE} argument (by default,
+{\cf FLOAT}). If {\cf type} is {\cf OpenImageIO.UNKNOWN}, an
+array of {\cf unsigned char} will be returned containing the raw data in
+its native format.
 
 \noindent Example:
 \begin{code}
@@ -792,9 +853,9 @@ appropriate data type.
 \apiend
 
 \apiitem{array ImageInput.{\ce read_scanlines} (ybegin, yend, z, chbegin, chend, \\
-\bigspc\bigspc\spc type=OpenImageIO.UNKNOWN) \\
+\bigspc\bigspc\spc type=OpenImageIO.FLOAT) \\
 array ImageInput.{\ce read_tiles} (xbegin, xend, ybegin, yend, zbegin, zend, \\
-    \bigspc\bigspc\spc chbegin, chend, type=OpenImageIO.UNKNOWN)}
+    \bigspc\bigspc\spc chbegin, chend, type=OpenImageIO.FLOAT)}
 Similar to the C++ routines, these functions read multiple scanlines or 
 tiles at once, which in some cases may be more efficient than reading
 each scanline or tile separately.  Additionally, they allow you to read only
@@ -824,7 +885,7 @@ a subset of channels.
 DeepData ImageInput.{\ce read_native_deep_tiles} (xbegin, xend, ybegin, yend,\\
 \bigspc\bigspc zbegin, zend, chbegin, chend) \\
 DeepData ImageInput.{\ce read_native_deep_image} (chbegin, chend)}
-\NEW % 1.6
+
 Read a collection of scanlines, tiles, or an entire image of ``deep'' pixel
 data. The begin/end coordinates are all integer values. The value returned
 will be a \DeepData if the read succeeds, or {\cf None} if the read fails.
@@ -1067,7 +1128,7 @@ Write one or many tiles to the currently open file.
 bool ImageOutput.{\ce write_deep_tiles} (xbegin, xend, ybegin, yend, \\
 \bigspc\bigspc\bigspc zbegin, zend, deepdata) \\
 bool ImageOutput.{\ce write_deep_image} (deepdata)}
-\NEW % 1.6
+
 Write a collection of scanlines, tiles, or an entire image of ``deep''
 pixel data. The begin/end coordinates are all integer values, and
 {\cf deepdata} should be a \DeepData.
@@ -1513,7 +1574,7 @@ the image and returns them as an array of values with type specified by
 \apiend
 
 \apiitem{ImageBuf.{\ce set_pixels} (roi, data)}
-\NEW % 1.6
+
 Sets the rectangle of pixels (and channels) specified by {\cf roi} with
 values in the {\cf data}, which may be either a tuple of floats or an array
 (if it's an array, the type of array --- float, unsigned char, etc. ---
@@ -1545,6 +1606,11 @@ retrieve the error message (and clear it afterwards).
 \end{code}
 \apiend
 
+\apiitem{int ImageBuf.{\ce pixelindex} (x, y, z, check_range=False)}
+\NEW %1.7
+Return the index of pixel (x,y,z).
+\apiend
+
 \apiitem{bool ImageBuf.{\ce deep}}
 Will be {\cf True} if the file contains ``deep'' pixel data, or {\cf False}
 for an ordinary images.
@@ -1556,6 +1622,13 @@ Return the number of deep samples for pixel (x,y,z).
 
 \apiitem{ImageBuf.{\ce set_deep_samples} (x, y, z, nsamples)}
 Set the number of deep samples for pixel (x,y,z).
+\apiend
+
+\apiitem{ImageBuf.{\ce deep_insert_samples} (x, y, z, samplepos, nsamples) \\
+int ImageBuf.{\ce deep_erase_samples} (x, y, z, samplepos, nsamples)}
+\NEW % 1.7
+Insert or erase \emph{nsamples} samples starting at the given position of
+pixel {\cf (x,y,z)}.
 \apiend
 
 \apiitem{float ImageBuf.{\ce deep_value} (x, y, z, channel, sample) \\
@@ -1574,11 +1647,6 @@ respectively.
 
 \apiitem{DeepData ImageBuf.{\ce deepdata}}
 Returns a reference to the underlying {\cf DeepData} of the image.
-\apiend
-
-\apiitem{ImageBuf.{\ce deep_alloc} ()}
-Allocate the space for all samples (assuming you have already properly
-called {\cf deepdata().init()}).
 \apiend
 
 
@@ -1678,7 +1746,6 @@ tuples giving the values for each color channel.
 \apiitem{bool ImageBufAlgo.{\ce noise_uniform} (dst, min=0.0, max=1.0, \\
 \bigspc\bigspc seed=0, roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!noise_uniform} \indexapi{noise_uniform}
-\NEW % 1.6
 
 Add noise to {\cf dst} that is uniformly-distributed over the range
 {\cf [min,max)}.  Choosing different seed values will result in a different pattern.
@@ -1695,7 +1762,6 @@ Add noise to {\cf dst} that is uniformly-distributed over the range
 \apiitem{bool ImageBufAlgo.{\ce noise_gaussian} (dst, mean=0.0, stddev=0.1, \\
 \bigspc\bigspc  seed=0, roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!noise_gaussian} \indexapi{noise_gaussian}
-\NEW % 1.6
 
 Fill {\cf dst} with Gaussian noise (normal distribution) with given mean
 and standard deviation.
@@ -1706,6 +1772,58 @@ Choosing different seed values will result in a different pattern.
 \begin{code}
     buf = ImageBuf(ImageSpec(640, 480, 3, oiio.UINT8))
     ImageBufAlgo.noise_gaussian (buf, (0.5,0.5,0.5), (0.1,0.1,0.1))
+\end{code}
+\apiend
+
+
+\apiitem{bool ImageBufAlgo.{\ce render_point} (dst, x, y, color=(1,1,1,1))}
+\index{ImageBufAlgo!render_point} \indexapi{render_point}
+\NEW % 1.7
+
+Render a point at pixel $(x,y)$ of {\cf dst}.  The {\cf color} (if supplied)
+is a tuple giving the per-channel colors.
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    buf = ImageBuf(ImageSpec (640, 480, 4, oiio.FLOAT))
+    ImageBufAlgo.render_point (buf, 10, 20, (1,0,0,1))
+\end{code}
+\apiend
+
+
+\apiitem{bool ImageBufAlgo.{\ce render_line} (dst, x1, y1, x2, y2, \\
+\bigspc\bigspc color=(1,1,1,1), skip_first_point=False)}
+\index{ImageBufAlgo!render_line} \indexapi{render_line}
+\NEW % 1.7
+
+Render a line from pixel $(x_1,y_1)$ to $(x_2,y_2)$ into {\cf dst}.  The
+{\cf color} (if supplied) is a tuple giving the per-channel colors.
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    buf = ImageBuf(ImageSpec (640, 480, 4, oiio.FLOAT))
+    ImageBufAlgo.render_line (buf, 10, 10, 500, 20, (1,0,0,1))
+\end{code}
+\apiend
+
+
+\apiitem{bool ImageBufAlgo.{\ce render_box} (dst, x1, y1, x2, y2, \\
+\bigspc\bigspc color=(1,1,1,1), filled=False)}
+\index{ImageBufAlgo!render_box} \indexapi{render_box}
+\NEW % 1.7
+
+Render a filled or unfilled box with corners at pixels $(x_1,y_1)$ and
+$(x_2,y_2)$ into {\cf dst}.  The {\cf color} (if supplied) is a tuple giving
+the per-channel colors.
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    buf = ImageBuf(ImageSpec (640, 480, 4, oiio.FLOAT))
+    ImageBufAlgo.render_box (buf, 150, 100, 240, 180, (0,1,1,1))
+    ImageBufAlgo.render_box (buf, 100, 50, 180, 140, (0.5, 0.5, 0, 0.5), True)
 \end{code}
 \apiend
 
@@ -1721,9 +1839,11 @@ is a tuple giving the per-channel colors.
 \noindent Examples:
 \begin{code}
     buf = ImageBuf(ImageSpec (640, 480, 4, oiio.FLOAT))
+    ImageBufAlgo.render_text (buf, 50, 100, "Hello, world")
     ImageBufAlgo.render_text (buf, 100, 200, "Go Big Red!",
                                60, "Arial Bold", (1,0,0,1))
 \end{code}
+% \spc \includegraphics[width=2.5in]{figures/text.jpg}
 \apiend
 
 
@@ -1732,7 +1852,7 @@ is a tuple giving the per-channel colors.
 \label{sec:iba:py:transforms}
 
 \apiitem{bool ImageBufAlgo.{\ce channels} (dst, src, channelorder, newchannelnames=(), \\
-        \bigspc\bigspc shuffle_channel_names=False)}
+        \bigspc\bigspc shuffle_channel_names=False, nthreads=0)}
 \index{ImageBufAlgo!channels} \indexapi{channels}
 
 Copy {\cf src} to {\cf dst}, but with channels in
@@ -1825,6 +1945,24 @@ src} and store the single  resulting value per pixel in ``flat'' \ImageBuf
 \apiend
 
 
+\apiitem{bool ImageBufAlgo.{\ce copy} (dst, src, convert=TypeDesc.UNKNOWN, \\
+        \bigspc roi=ROI.All, nthreads=0)}
+\index{ImageBufAlgo!copy} \indexapi{copy}
+Copy the specified region of pixels of {\cf src} into {\cf dst} at the same
+locations, without changing any existing pixels of {\cf dst} outside the
+region.  If {\cf dst} is not already initialized, it will be set to the same
+size as {\cf roi} (defaulting to all of {\cf src}), optionally with the pixel
+type overridden by {\cf convert} (if it is not {\cf UNKNOWN}).
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    # Copy A's upper left 200x100 region into B
+    ImageBufAlgo.copy (B, A, ROI(0,200,0,100))
+\end{code}
+\apiend
+
+
 \apiitem{bool ImageBufAlgo.{\ce crop} (dst, src, roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!crop} \indexapi{crop}
 Reset {\cf dst} to be the specified region of {\cf src}.
@@ -1894,13 +2032,10 @@ Copy while rotating the image by a multiple of 90 degrees.
 
 
 \apiitem{bool ImageBufAlgo.{\ce flip} (dst, src, roi=ROI.All, nthreads=0) \\
-bool ImageBufAlgo.{\ce flop} (dst, src, roi=ROI.All, nthreads=0) \\
-bool ImageBufAlgo.{\ce flipflop} (dst, src, roi=ROI.All, nthreads=0)}
+bool ImageBufAlgo.{\ce flop} (dst, src, roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!flip} \indexapi{flip}
 \index{ImageBufAlgo!flop} \indexapi{flop}
-\index{ImageBufAlgo!flipflop} \indexapi{flipflop}
-Copy while reversing orientation vertically (flip), horizontally (flop),
-or both vertically and horizontally (flipflip).
+Copy while reversing orientation vertically (flip) or horizontally (flop).
 
 \smallskip
 \noindent Examples:
@@ -2082,7 +2217,6 @@ be an \ImageBuf, a {\cf float} (added to all channels) or a tuple giving a
 
 \apiitem{bool ImageBufAlgo.{\ce absdiff} (dst, A, B, roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!absdiff} \indexapi{absdiff}
-\NEW % 1.6
 
 Compute {\cf dst = abs(A - B)}.  {\cf A} is an \ImageBuf, and {\cf B}  may
 be an \ImageBuf, a {\cf float} (added to all channels) or a tuple giving a
@@ -2099,7 +2233,6 @@ be an \ImageBuf, a {\cf float} (added to all channels) or a tuple giving a
 
 \apiitem{bool ImageBufAlgo.{\ce abs} (dst, A, roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!abs} \indexapi{abs}
-\NEW % 1.6
 
 Compute {\cf dst = abs(A)}.  {\cf A} is an \ImageBuf.
 
@@ -2134,7 +2267,6 @@ all channels) or a tuple giving a {\cf float} for each color channel.
 
 \apiitem{bool ImageBufAlgo.{\ce div} (dst, A, B, roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!div} \indexapi{div}
-\NEW % 1.6
 
 Compute {\cf dst} = {\cf A / B} (channel-by-channel division), where $x/0$
 is defined to be $0$.  {\cf A} is an \ImageBuf, and {\cf B}  may be an
@@ -2156,7 +2288,6 @@ float} for each color channel.
 
 \apiitem{bool ImageBufAlgo.{\ce mad} (dst, A, B, C, roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!mad} \indexapi{mad}
-\NEW % 1.6
 
 Compute {\cf dst} = {\cf A * B + C} (channel-by-channel multiplication
 and addition). {\cf A}
@@ -2178,7 +2309,6 @@ each color channel.
 
 \apiitem{bool ImageBufAlgo.{\ce invert} (dst, A, roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!invert} \indexapi{invert}
-\NEW % 1.6
 
 Compute {\cf dst = 1-A} (channel by channel color inverse).
 {\cf A} is an \ImageBuf.
@@ -2598,7 +2728,7 @@ caution!
 Kernel names can be: \qkw{gaussian}, \qkw{sharp-gaussian}, \qkw{box},
 \qkw{triangle}, \qkw{mitchell}, \qkw{blackman-harris}, \qkw{b-spline},
 \qkw{catmull-rom}, \qkw{lanczos3}, \qkw{cubic}, \qkw{keys}, \qkw{simon},
-\qkw{rifman}, \qkw{disk}, \qkw{binomial}. Note that
+\qkw{rifman}, \qkw{disk}, \qkw{binomial}, \qkw{laplacian}. Note that
 \qkw{catmull-rom} and \qkw{lanczos3} are fixed-size kernels that don't
 scale with the width, and are therefore probably less useful in most
 cases.
@@ -2627,6 +2757,22 @@ a kernel (also an \ImageBuf).
     ImageBufAlgo.make_kernel (K, "gaussian", 5.0, 5.0)
     Blurred = ImageBuf ()
     ImageBufAlgo.convolve (Blurred, Src, K)
+\end{code}
+\apiend
+
+
+\apiitem{bool ImageBufAlgo.{\ce laplacian} (dst, src, roi=ROI.All, nthreads=0)}
+\index{ImageBufAlgo!laplacian} \indexapi{laplacian}
+\NEW % 1.7
+Replace the given ROI of {\cf dst} with the Laplacian of the corresponding
+part of {\cf src}.
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    Src = ImageBuf ("tahoe.exr")
+    L = ImageBuf ()
+    ImageBufAlgo.laplacian (L, Src)
 \end{code}
 \apiend
 
@@ -2731,8 +2877,9 @@ of src was < 1, dst will have a pixel color that is a plausible
 \index{ImageBufAlgo!median_filter} \indexapi{median_filter}
 
 
-Replace the given ROI of {\cf dst} with a sharpened version of the
-corresponding region of {\cf src} using the ``unsharp mask'' technique.
+Replace the given ROI of {\cf dst} with the
+${\mathit width} \times {\mathit height}$ median filter of the corresponding
+region of {\cf src} using the ``unsharp mask'' technique.
 
 \smallskip
 \noindent Examples:
@@ -2740,6 +2887,27 @@ corresponding region of {\cf src} using the ``unsharp mask'' technique.
     Noisy = ImageBuf ("tahoe.exr")
     Clean = ImageBuf ()
     ImageBufAlgo.median_filter (Clean, Noisy, 3, 3)
+\end{code}
+\apiend
+
+
+\apiitem{bool ImageBufAlgo.{\ce dilate} (dst, src, width=3, height=-1, \\
+  \bigspc\spc  roi=ROI.All, nthreads=0) \\
+bool ImageBufAlgo.{\ce erode} (dst, src, width=3, height=-1, \\
+  \bigspc\spc  roi=ROI.All, nthreads=0) }
+\index{ImageBufAlgo!dilate} \indexapi{dilate}
+\index{ImageBufAlgo!erode} \indexapi{erode}
+\NEW % 1.7
+
+Replace the given ROI of {\cf dst} with a dilated or eroded version of the
+corresponding region of {\cf src}.
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    Source = ImageBuf ("source.tif")
+    Dilated = ImageBuf ()
+    ImageBufAlgo.dilate (Dilated, Source, 3, 3)
 \end{code}
 \apiend
 
@@ -2945,6 +3113,25 @@ recognized attribute.
     oiio.attribute ("threads", 0)
 \end{code}
 \apiend
+
+\apiitem{{\ce getattribute} (name, typedesc) \\
+{\ce get_int_attribute} (name, defaultval=0) \\
+{\ce get_float_attribute} (name, defaultval=0.0) \\
+{\ce get_string_attribute} (name, defaultval="")}
+\NEW % 1.7
+Retrieves an attribute value from the named set of global OIIO options. (See
+Section~\ref{sec:globalattribute}.) The {\cf getattribute()} function
+returns the value regardless of type, or {\cf None} if the attribute does
+not exist.  The typed variety will only succeed if the attribute is actually
+of that type specified. Type varity with the type in the name also takes a
+default value.
+
+\noindent Example:
+\begin{code}
+    formats = oiio.get_string_attribute ("format_list")
+\end{code}
+\apiend
+
 
 
 \section{Python Recipes}

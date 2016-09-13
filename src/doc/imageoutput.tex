@@ -1302,7 +1302,6 @@ DSO/DLL's.
 \apiend
 
 \apiitem{void {\ce destroy} (ImageOutput *Output)}
-\NEW  % 1.6
 Destroy an \ImageOutput that was created by {\cf create()}.
 The {\cf destroy()} method is just a wrapper around operator {\cf delete},
 but by being implemented within the \product DLL, it can ensure that the
@@ -1643,6 +1642,21 @@ This is currently undefined and is reserved for future use.
 \apiitem{int {\ce send_to_client} (const char *format, ...)}
 General message passing between client and image output server.
 This is currently undefined and is reserved for future use.
+\apiend
+
+\apiitem{void {\ce threads} (int n) \\
+int {\ce threads} () const}
+\index{threads}
+Get or set the threading policy for this \ImageOutput, controlling the
+maximum amount of parallelizing thread ``fan-out'' that might occur during
+large write operations. The default of 0 means that the global
+{\cf attribute("threads")} value should be used (which itself defaults to
+using as many threads as cores; see Section~\ref{sec:attribute:threads}).
+
+The main reason to change this value is to set it to 1 to indicate that the
+calling thread should do all the work rather than spawning new threads. That
+is probably the desired behavior in situations where the calling application
+has already spawned multiple worker threads.
 \apiend
 
 \apiitem{std::string {\ce geterror} ()}

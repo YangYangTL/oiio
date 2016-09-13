@@ -806,7 +806,6 @@ creates the \ImageInput, it does not open the file.
 \apiend
 
 \apiitem{void {\ce destroy} (ImageInput *input)}
-\NEW  % 1.6
 
 Destroy an \ImageInput that was created by {\cf create()} or {\cf open()}.
 The {\cf destroy()} method is just a wrapper around operator {\cf delete},
@@ -1043,6 +1042,13 @@ channels $[${\cf chbegin},{\cf chend}$)$ into the buffer.
                              stride_t ystride=AutoStride, \\
                              \bigspc stride_t zstride=AutoStride, \\
                              \bigspc ProgressCallback progress_callback=NULL,\\
+                             \bigspc void *progress_callback_data=NULL) \\
+bool {\ce read_image} (int chbegin, int chend, \\
+                             \bigspc TypeDesc format, void *data, \\
+                             \bigspc stride_t xstride=AutoStride,
+                             stride_t ystride=AutoStride, \\
+                             \bigspc stride_t zstride=AutoStride, \\
+                             \bigspc ProgressCallback progress_callback=NULL,\\
                              \bigspc void *progress_callback_data=NULL)}
 
 Read the entire image of {\kw spec.width * spec.height * spec.depth}
@@ -1062,6 +1068,9 @@ data, i.e., \\
 The function will internally either call {\kw read_scanlines} or 
 {\kw read_tiles}, depending on whether the file is scanline- or
 tile-oriented.
+
+The version that specifies a channel range will read only
+channels $[${\cf chbegin},{\cf chend}$)$ into the buffer.
 
 Because this may be an expensive operation, a progress callback may be passed.
 Periodically, it will be called as follows:\\
@@ -1161,6 +1170,21 @@ General message passing between client and image input server.
 This is currently undefined and is reserved for future use.
 \apiend
 
+\apiitem{void {\ce threads} (int n) \\
+int {\ce threads} () const}
+\index{threads}
+Get or set the threading policy for this \ImageInput, controlling the
+maximum amount of parallelizing thread ``fan-out'' that might occur during
+large read operations. The default of 0 means that the global
+{\cf attribute("threads")} value should be used (which itself defaults to
+using as many threads as cores; see Section~\ref{sec:attribute:threads}).
+
+The main reason to change this value is to set it to 1 to indicate that the
+calling thread should do all the work rather than spawning new threads. That
+is probably the desired behavior in situations where the calling application
+has already spawned multiple worker threads.
+\apiend
+
 \apiitem{std::string {\ce geterror} () const}
 \index{error checking}
 Returns the current error string describing what went wrong if
@@ -1168,8 +1192,6 @@ any of the public methods returned {\kw false} indicating an error.
 (Hopefully the implementation plugin called {\kw error()} with a
 helpful error message.)
 \apiend
-
-
 
 \index{Image I/O API|)}
 

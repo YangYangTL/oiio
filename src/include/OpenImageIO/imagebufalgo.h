@@ -42,7 +42,6 @@
 #include "imagebuf.h"
 #include "fmath.h"
 #include "color.h"
-#include "thread.h"
 
 #include <OpenEXR/ImathMatrix.h>       /* because we need M33f */
 
@@ -224,6 +223,11 @@ bool OIIO_API noise (ImageBuf &dst, string_view noisetype,
 /// shuffling both channel ordering and their names could result in no
 /// semantic change at all, if you catch the drift.
 ///
+/// The nthreads parameter specifies how many threads (potentially) may
+/// be used, but it's not a guarantee.  If nthreads == 0, it will use
+/// the global OIIO attribute "nthreads".  If nthreads == 1, it
+/// guarantees that it will not launch any new threads.
+///
 /// N.B. If you are merely interested in extending the number of channels
 /// or truncating channels at the end (but leaving the other channels
 /// intact), then you should call this as:
@@ -232,7 +236,7 @@ bool OIIO_API channels (ImageBuf &dst, const ImageBuf &src,
                         int nchannels, const int *channelorder,
                         const float *channelvalues=NULL,
                         const std::string *newchannelnames=NULL,
-                        bool shuffle_channel_names=false);
+                        bool shuffle_channel_names=false, int nthreads=0);
 
 
 /// Append the channels of A and B together into dst over the region of
@@ -293,6 +297,44 @@ bool OIIO_API deepen (ImageBuf &dst, const ImageBuf &src, float zvalue = 1.0f,
 /// guarantees that it will not launch any new threads.
 bool OIIO_API flatten (ImageBuf &dst, const ImageBuf &src,
                        ROI roi = ROI::All(), int nthreads = 0);
+
+
+/// Set dst to the deep merge of the samples of deep images A and B,
+/// overwriting any existing samples of dst in the ROI.
+/// If occlusion_cull is true, any samples occluded by an opaque
+/// sample will be deleted.
+///
+/// 'roi' specifies the region of dst's pixels which will be computed;
+/// existing pixels outside this range will not be altered.  If not
+/// specified, the default ROI value will be the pixel data window of src.
+///
+/// The nthreads parameter specifies how many threads (potentially) may
+/// be used, but it's not a guarantee.  If nthreads == 0, it will use
+/// the global OIIO attribute "nthreads".  If nthreads == 1, it
+/// guarantees that it will not launch any new threads.
+bool OIIO_API deep_merge (ImageBuf &dst, const ImageBuf &A,
+                          const ImageBuf &B, bool occlusion_cull = true,
+                          ROI roi = ROI::All(), int nthreads = 0);
+
+
+/// Copy the specified region of pixels of src into dst at the same
+/// locations, without changing any existing pixels of dst outside the
+/// region.  If dst is not already initialized, it will be set to the same
+/// size as roi (defaulting to all of src), optionally with the pixel type
+/// overridden by convert (if it is not UNKNOWN).
+///
+/// The nthreads parameter specifies how many threads (potentially) may
+/// be used, but it's not a guarantee.  If nthreads == 0, it will use
+/// the global OIIO attribute "nthreads".  If nthreads == 1, it
+/// guarantees that it will not launch any new threads.
+///
+/// Works on all pixel data types.
+///
+/// Return true on success, false on error (with an appropriate error
+/// message set in dst).
+bool OIIO_API copy (ImageBuf &dst, const ImageBuf &src,
+                    TypeDesc convert=TypeDesc::UNKNOWN,
+                    ROI roi = ROI::All(), int nthreads = 0);
 
 
 /// Reset dst to be the specified region of src.
@@ -385,9 +427,6 @@ bool OIIO_API rotate90 (ImageBuf &dst, const ImageBuf &src,
 /// message set in dst).
 bool OIIO_API rotate180 (ImageBuf &dst, const ImageBuf &src,
                          ROI roi=ROI::All(), int nthreads=0);
-/// DEPRECATED(1.5) synonym for rotate180.
-bool OIIO_API flipflop (ImageBuf &dst, const ImageBuf &src,
-                        ROI roi=ROI::All(), int nthreads=0);
 
 /// Copy src to dst, but with the image pixels rotated 90 degrees
 /// clockwise. In other words,
@@ -930,7 +969,7 @@ bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
                             bool unpremult=false,
                             ColorConfig *colorconfig=NULL,
                             ROI roi=ROI::All(), int nthreads=0);
-// DEPRECATED (1.6)
+OIIO_DEPRECATED("Use the version that takes a ColorConfig*. [1.6]")
 bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
                             string_view from, string_view to,
                             bool unpremult, ROI roi, int nthreads=0);
@@ -973,7 +1012,8 @@ bool OIIO_API colorconvert (float *color, int nchannels,
 ///
 /// If unpremult is true, unpremultiply before color conversion, then
 /// premultiply after the color conversion.  You may want to use this
-/// flag if your image contains an alpha channel.
+/// flag if your image contains an alpha channel. If inverse is true, it
+/// will reverse the color transformation.
 ///
 /// Return true on success, false on error (with an appropriate error
 /// message set in dst).
@@ -983,7 +1023,7 @@ bool OIIO_API ociolook (ImageBuf &dst, const ImageBuf &src,
                         string_view key="", string_view value="",
                         ColorConfig *colorconfig=NULL,
                         ROI roi=ROI::All(), int nthreads=0);
-// DEPRECATED (1.6)
+OIIO_DEPRECATED("Use the version that takes a ColorConfig*. [1.6]")
 bool OIIO_API ociolook (ImageBuf &dst, const ImageBuf &src,
                         string_view looks, string_view from, string_view to,
                         bool unpremult, bool inverse,
@@ -1014,13 +1054,32 @@ bool OIIO_API ociodisplay (ImageBuf &dst, const ImageBuf &src,
                         string_view key="", string_view value="",
                         ColorConfig *colorconfig=NULL,
                         ROI roi=ROI::All(), int nthreads=0);
-// DEPRECATED (1.6)
+OIIO_DEPRECATED("Use the version that takes a ColorConfig*. [1.6]")
 bool OIIO_API ociodisplay (ImageBuf &dst, const ImageBuf &src,
                         string_view display, string_view view,
                         string_view from, string_view looks,
                         bool unpremult, string_view key, string_view value,
                         ROI roi, int nthreads=0);
 
+/// Copy pixels within the ROI from src to dst, applying an OpenColorIO
+/// "file" transform.  If inverse is true, it will reverse the color
+/// transformation. In-place operations (dst == src) are supported.
+///
+/// If dst is not yet initialized, it will be allocated to the same
+/// size as specified by roi.  If roi is not defined it will be all
+/// of dst, if dst is defined, or all of src, if dst is not yet defined.
+///
+/// If unpremult is true, unpremultiply before color conversion, then
+/// premultiply after the color conversion.  You may want to use this
+/// flag if your image contains an alpha channel. 
+///
+/// Return true on success, false on error (with an appropriate error
+/// message set in dst).
+bool OIIO_API ociofiletransform (ImageBuf &dst, const ImageBuf &src,
+                                 string_view name,
+                                 bool unpremult=false, bool inverse=false,
+                                 ColorConfig *colorconfig=NULL,
+                                 ROI roi=ROI::All(), int nthreads=0);
 
 /// Copy pixels from dst to src, and in the process divide all color
 /// channels (those not alpha or z) by the alpha value, to "un-premultiply"
@@ -1450,7 +1509,7 @@ bool OIIO_API convolve (ImageBuf &dst, const ImageBuf &src,
 ///
 /// Kernel names can be: "gaussian", "sharp-gaussian", "box",
 /// "triangle", "blackman-harris", "mitchell", "b-spline", "catmull-rom",
-/// "lanczos3", "disk", "binomial."
+/// "lanczos3", "disk", "binomial", "laplacian".
 /// 
 /// Note that "catmull-rom" and "lanczos3" are fixed-size kernels that
 /// don't scale with the width, and are therefore probably less useful
@@ -1492,6 +1551,28 @@ bool OIIO_API unsharp_mask (ImageBuf &dst, const ImageBuf &src,
                             ROI roi = ROI::All(), int nthreads = 0);
 
 
+/// Replace the given ROI of dst with the Laplacian of the corresponding
+/// region of src. This is approximated by convolving src with the discrete
+/// 3x3 Laplacian kernel,
+///                     [ 0  1  0 ]
+///                     [ 1 -4  1 ]
+///                     [ 0  1  0 ]
+///
+/// If roi is not defined, it defaults to the full size of dst (or src,
+/// if dst was undefined).  If dst is uninitialized, it will be
+/// allocated to be the size specified by roi.
+///
+/// The nthreads parameter specifies how many threads (potentially) may
+/// be used, but it's not a guarantee.  If nthreads == 0, it will use
+/// the global OIIO attribute "nthreads".  If nthreads == 1, it
+/// guarantees that it will not launch any new threads.
+///
+/// Return true on success, false on error (with an appropriate error
+/// message set in dst).
+bool OIIO_API laplacian (ImageBuf &dst, const ImageBuf &src,
+                         ROI roi = ROI::All(), int nthreads = 0);
+
+
 /// Replace the given ROI of dst with a median-filtered version of the
 /// corresponding region of src. The size of the window over which the
 /// median is computed is given by width and height (if height is <= 0,
@@ -1515,6 +1596,50 @@ bool OIIO_API unsharp_mask (ImageBuf &dst, const ImageBuf &src,
 bool OIIO_API median_filter (ImageBuf &dst, const ImageBuf &src,
                              int width = 3, int height = -1,
                              ROI roi = ROI::All(), int nthreads = 0);
+
+
+/// Replace the given ROI of dst with the dilated version of the
+/// corresponding region of src. Dilation is definted as the maximum
+/// value of all pixels under nonzero values of the structuring element
+/// (which is taken to be a width x height square). If height is not
+/// set, it will default to be the same as width.
+///
+/// If roi is not defined, it defaults to the full size of dst (or src,
+/// if dst was undefined).  If dst is uninitialized, it will be
+/// allocated to be the size specified by roi.
+///
+/// The nthreads parameter specifies how many threads (potentially) may
+/// be used, but it's not a guarantee.  If nthreads == 0, it will use
+/// the global OIIO attribute "nthreads".  If nthreads == 1, it
+/// guarantees that it will not launch any new threads.
+///
+/// Return true on success, false on error (with an appropriate error
+/// message set in dst).
+bool OIIO_API dilate (ImageBuf &dst, const ImageBuf &src,
+                      int width = 3, int height = -1,
+                      ROI roi = ROI::All(), int nthreads = 0);
+
+
+/// Replace the given ROI of dst with the eroded version of the
+/// corresponding region of src. Erosion is definted as the minimum
+/// value of all pixels under nonzero values of the structuring element
+/// (which is taken to be a width x height square). If height is not
+/// set, it will default to be the same as width.
+///
+/// If roi is not defined, it defaults to the full size of dst (or src,
+/// if dst was undefined).  If dst is uninitialized, it will be
+/// allocated to be the size specified by roi.
+///
+/// The nthreads parameter specifies how many threads (potentially) may
+/// be used, but it's not a guarantee.  If nthreads == 0, it will use
+/// the global OIIO attribute "nthreads".  If nthreads == 1, it
+/// guarantees that it will not launch any new threads.
+///
+/// Return true on success, false on error (with an appropriate error
+/// message set in dst).
+bool OIIO_API erode (ImageBuf &dst, const ImageBuf &src,
+                     int width = 3, int height = -1,
+                     ROI roi = ROI::All(), int nthreads = 0);
 
 
 /// Take the discrete Fourier transform (DFT) of the section of src
@@ -1603,6 +1728,7 @@ enum OIIO_API NonFiniteFixMode
     NONFINITE_NONE = 0,     ///< Do nothing
     NONFINITE_BLACK = 1,    ///< Replace nonfinite pixels with black
     NONFINITE_BOX3 = 2,     ///< Replace nonfinite pixels with 3x3 finite average
+    NONFINITE_ERROR = 100,  ///< Error if any nonfinite pixels are found
 };
 
 /// Copy the values of src (within the ROI) to dst, while repairing  any
@@ -1617,6 +1743,8 @@ enum OIIO_API NonFiniteFixMode
 ///   NONFINITE_BLACK  change non-finite values to 0.
 ///   NONFINITE_BOX3   replace non-finite values by the average of any
 ///                       finite pixels within a 3x3 window.
+///   NONFINITE_ERROR  return false (error), but don't change any values,
+///                       if any nonfinite values are found.
 ///
 /// The nthreads parameter specifies how many threads (potentially) may
 /// be used, but it's not a guarantee.  If nthreads == 0, it will use
@@ -1726,6 +1854,35 @@ bool OIIO_API zover (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
 
 
 
+/// Render a single point at (x,y) of the given color "over" the existing
+/// image dst. If there is no alpha channel, the color will be written
+/// unconditionally (as if the alpha is 1.0). The color array view must
+/// contain at least as many values as channels in the image.
+bool OIIO_API render_point (ImageBuf &dst, int x, int y,
+                            array_view<const float> color,
+                            ROI roi = ROI::All(), int nthreads = 0);
+
+/// Render a line from (x1,y1) to (x2,y2) of the given color "over" the
+/// existing image dst. If there is no alpha channel, the color will be
+/// written unconditionally (as if the alpha is 1.0). The color array view
+/// must contain at least as many values as channels in the image.
+/// If skip_first_point is true, the very first point (x1,y1) will not
+/// be rendered; this can be useful for rendering segments of poly-lines
+/// to avoid double-rendering the vertex positions.
+bool OIIO_API render_line (ImageBuf &dst, int x1, int y1, int x2, int y2,
+                           array_view<const float> color,
+                           bool skip_first_point = false,
+                           ROI roi = ROI::All(), int nthreads = 0);
+
+/// Render an a filled or unfilled box with corners (x1,y1) and (x2,y2) of
+/// the given color "over" the existing image dst. If there is no alpha
+/// channel, the color will be written unconditionally (as if the alpha is
+/// 1.0). The color array view must contain at least as many values as
+/// channels in the image.
+bool OIIO_API render_box (ImageBuf &dst, int x1, int y1, int x2, int y2,
+                          array_view<const float> color, bool fill = false,
+                          ROI roi = ROI::All(), int nthreads = 0);
+
 /// Render a text string (encoded as UTF-8) into image dst, essentially
 /// doing an "over" of the character into the existing pixel data.  The
 /// baseline of the first character will start at position (x,y).  The font
@@ -1739,6 +1896,7 @@ bool OIIO_API render_text (ImageBuf &dst, int x, int y,
                            string_view text,
                            int fontsize=16, string_view fontname="",
                            const float *textcolor = NULL);
+
 
 
 /// ImageBufAlgo::histogram --------------------------------------------------
@@ -1823,7 +1981,8 @@ enum OIIO_API MakeTextureMode {
 ///    maketx:nomipmap (int)  If nonzero, only output the top MIP level (0).
 ///    maketx:updatemode (int) If nonzero, write new output only if the
 ///                              output file doesn't already exist, or is
-///                              older than the input file. (0)
+///                              older than the input file, or was created
+///                              with different command-line arguments. (0)
 ///    maketx:constant_color_detect (int)
 ///                           If nonzero, detect images that are entirely
 ///                             one color, and change them to be low

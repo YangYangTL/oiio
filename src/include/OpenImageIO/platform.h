@@ -67,7 +67,7 @@
 #include <malloc.h> // for alloca
 #endif
 
-#ifdef _WIN32
+#if defined(_MSC_VER) || defined(_WIN32)
 # ifndef WIN32_LEAN_AND_MEAN
 #   define WIN32_LEAN_AND_MEAN
 # endif
@@ -128,6 +128,60 @@
 
 
 
+// Fallback definitions for feature testing. Some newer compilers define
+// these for real, and it may be standard for C++17.
+#ifndef __has_feature
+#  define __has_feature(x) 0
+#endif
+#ifndef __has_extension
+#  define __has_extension(x) __has_feature(x)
+#endif
+#ifndef __has_attribute
+#  define __has_attribute(x) 0
+#endif
+#ifndef __has_builtin
+#  define __has_builtin(x) 0
+#endif
+#ifndef __has_include
+#  define __has_include(x) 0
+#endif
+
+
+
+// Define OIIO_GNUC_VERSION to hold an encoded gcc version (e.g. 40802 for
+// 4.8.2), or 0 if not a GCC release. N.B.: This will be 0 for clang.
+#if defined(__GNUC__) && !defined(__clang__)
+#  define OIIO_GNUC_VERSION (10000*__GNUC__ + 100*__GNUC_MINOR__ + __GNUC_PATCHLEVEL__)
+#else
+#  define OIIO_GNUC_VERSION 0
+#endif
+
+// Define OIIO_CLANG_VERSION to hold an encoded generic Clang version (e.g.
+// 30402 for clang 3.4.2), or 0 if not a generic Clang release.
+// N.B. This will be 0 for the clang Apple distributes (which has different
+// version numbers entirely).
+#if defined(__clang__) && !defined(__apple_build_version__)
+#  define OIIO_CLANG_VERSION (10000*__clang_major__ + 100*__clang_minor__ + __clang_patchlevel__)
+#else
+#  define OIIO_CLANG_VERSION 0
+#endif
+
+// Define OIIO_APPLE_CLANG_VERSION to hold an encoded Apple Clang version
+// (e.g. 70002 for clang 7.0.2), or 0 if not an Apple Clang release.
+#if defined(__clang__) && defined(__apple_build_version__)
+#  define OIIO_APPLE_CLANG_VERSION (10000*__clang_major__ + 100*__clang_minor__ + __clang_patchlevel__)
+#else
+#  define OIIO_APPLE_CLANG_VERSION 0
+#endif
+
+// Tests for MSVS versions, always 0 if not MSVS at all.
+#define OIIO_MSVS_AT_LEAST_2013 (defined(_MSC_VER) && _MSC_VER >= 1800)
+#define OIIO_MSVS_BEFORE_2013   (defined(_MSC_VER) && _MSC_VER <  1800)
+#define OIIO_MSVS_AT_LEAST_2015 (defined(_MSC_VER) && _MSC_VER >= 1900)
+#define OIIO_MSVS_BEFORE_2015   (defined(_MSC_VER) && _MSC_VER <  1900)
+
+
+
 /// allocates memory, equivalent of C99 type var_name[size]
 #define OIIO_ALLOCA(type, size) ((type*)alloca((size) * sizeof (type)))
 
@@ -138,10 +192,10 @@
 // Define a macro that can be used for memory alignment.
 // I think that in a future world of C++1x compatibility, all these can
 // be replaced with [[ align(size) ]].
-#if defined (_MSC_VER)
-#  define OIIO_ALIGN(size) __declspec(align(size))
-#elif defined (__GNUC__)
+#if defined (__GNUC__) || __has_attribute(aligned)
 #  define OIIO_ALIGN(size) __attribute__((aligned(size)))
+#elif defined (_MSC_VER)
+#  define OIIO_ALIGN(size) __declspec(align(size))
 #elif defined (__INTEL_COMPILER)
 #  define OIIO_ALIGN(size) __declspec(align((size)))
 #else
@@ -167,9 +221,9 @@
 //     if (OIIO_UNLIKELY(x)) ...   // if you think x will rarely be true
 // Caveat: Programmers are notoriously bad at guessing this, so it
 // should be used only with thorough benchmarking.
-#ifdef __GNUC__
-#define OIIO_LIKELY(x)   (__builtin_expect(!!(x), 1))
-#define OIIO_UNLIKELY(x) (__builtin_expect((x), 0))
+#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER)
+#define OIIO_LIKELY(x)   (__builtin_expect(bool(x), true))
+#define OIIO_UNLIKELY(x) (__builtin_expect(bool(x), false))
 #else
 #define OIIO_LIKELY(x)   (x)
 #define OIIO_UNLIKELY(x) (x)
@@ -180,7 +234,7 @@
 // always inline. On many compilers regular 'inline' is only advisory. Put
 // this attribute before the function return type, just like you would use
 // 'inline'.
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__) || __has_attribute(always_inline)
 #  define OIIO_FORCEINLINE inline __attribute__((always_inline))
 #elif defined(_MSC_VER) || defined(__INTEL_COMPILER)
 #  define OIIO_FORCEINLINE __forceinline
@@ -194,7 +248,7 @@
 // optimizations by knowing that calling the function cannot possibly alter
 // any other memory. This declaration goes after the function declaration:
 //   int blah (int arg) OIIO_PURE_FUNC;
-#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER)
+#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || __has_attribute(pure)
 #  define OIIO_PURE_FUNC __attribute__((pure))
 #elif defined(_MSC_VER)
 #  define OIIO_PURE_FUNC  /* seems not supported by MSVS */
@@ -208,7 +262,7 @@
 // no side effects. This is even more strict than 'pure', and allows even
 // more optimizations (such as eliminating multiple calls to the function
 // that have the exact same argument values).
-#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER)
+#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || __has_attribute(const)
 #  define OIIO_CONST_FUNC __attribute__((const))
 #elif defined(_MSC_VER)
 #  define OIIO_CONST_FUNC  /* seems not supported by MSVS */
@@ -220,7 +274,7 @@
 // neither the function nor any other function it calls will throw an
 // exception. This declaration goes after the
 // function declaration:  int blah (int arg) OIIO_NOTHROW;
-#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER)
+#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || __has_attribute(nothrow)
 #  define OIIO_NOTHROW __attribute__((nothrow))
 #elif defined(_MSC_VER)
 #  define OIIO_NOTHROW __declspec(nothrow)
@@ -230,7 +284,7 @@
 
 // OIIO_UNUSED_OK is a function or variable attribute that assures tells the
 // compiler that it's fine for the item to appear to be unused.
-#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER)
+#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || __has_attribute(unused)
 #  define OIIO_UNUSED_OK __attribute__((unused))
 #else
 #  define OIIO_UNUSED_OK
@@ -245,6 +299,18 @@
 #  define OIIO_RESTRICT 
 #endif
 
+
+#if OIIO_CPLUSPLUS_VERSION >= 14 && __has_attribute(deprecated)
+#  define OIIO_DEPRECATED(msg) [[deprecated(msg)]]
+#elif OIIO_GNUC_VERSION >= 40600 || defined(__clang__)
+#  define OIIO_DEPRECATED(msg) __attribute__((deprecated(msg)))
+#elif defined(__GNUC__) /* older gcc -- only the one with no message */
+#  define OIIO_DEPRECATED(msg) __attribute__((deprecated))
+#elif defined(_MSC_VER)
+#  define OIIO_DEPRECATED(msg) __declspec(deprecated(msg))
+#else
+#  define OIIO_DEPRECATED(msg)
+#endif
 
 
 // Try to deduce endianness
@@ -308,16 +374,16 @@ inline void cpuid (int info[4], int infoType, int extra)
 }
 
 
-inline bool cpu_has_sse2  () {int i[4]; cpuid(i,1,0); return i[3] & (1<<26); }
-inline bool cpu_has_sse3  () {int i[4]; cpuid(i,1,0); return i[2] & (1<<0); }
-inline bool cpu_has_ssse3 () {int i[4]; cpuid(i,1,0); return i[2] & (1<<9); }
-inline bool cpu_has_fma   () {int i[4]; cpuid(i,1,0); return i[2] & (1<<12); }
-inline bool cpu_has_sse41 () {int i[4]; cpuid(i,1,0); return i[2] & (1<<19); }
-inline bool cpu_has_sse42 () {int i[4]; cpuid(i,1,0); return i[2] & (1<<20); }
-inline bool cpu_has_popcnt() {int i[4]; cpuid(i,1,0); return i[2] & (1<<23); }
-inline bool cpu_has_avx   () {int i[4]; cpuid(i,1,0); return i[2] & (1<<28); }
-inline bool cpu_has_f16c  () {int i[4]; cpuid(i,1,0); return i[2] & (1<<29); }
-inline bool cpu_has_rdrand() {int i[4]; cpuid(i,1,0); return i[2] & (1<<30); }
+inline bool cpu_has_sse2  () {int i[4]; cpuid(i,1,0); return (i[3] & (1<<26)) != 0; }
+inline bool cpu_has_sse3  () {int i[4]; cpuid(i,1,0); return (i[2] & (1<<0)) != 0; }
+inline bool cpu_has_ssse3 () {int i[4]; cpuid(i,1,0); return (i[2] & (1<<9)) != 0; }
+inline bool cpu_has_fma   () {int i[4]; cpuid(i,1,0); return (i[2] & (1<<12)) != 0; }
+inline bool cpu_has_sse41 () {int i[4]; cpuid(i,1,0); return (i[2] & (1<<19)) != 0; }
+inline bool cpu_has_sse42 () {int i[4]; cpuid(i,1,0); return (i[2] & (1<<20)) != 0; }
+inline bool cpu_has_popcnt() {int i[4]; cpuid(i,1,0); return (i[2] & (1<<23)) != 0; }
+inline bool cpu_has_avx   () {int i[4]; cpuid(i,1,0); return (i[2] & (1<<28)) != 0; }
+inline bool cpu_has_f16c  () {int i[4]; cpuid(i,1,0); return (i[2] & (1<<29)) != 0; }
+inline bool cpu_has_rdrand() {int i[4]; cpuid(i,1,0); return (i[2] & (1<<30)) != 0; }
 
 
 OIIO_NAMESPACE_END

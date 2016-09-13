@@ -1,11 +1,11 @@
 Comparison: of flip.tif and flop.tif
-  mean = 0.00687588584816
-  rms  = 0.0511750114577
-  PSNR = 25.8188410286
-  max  = 0.450980424881
+  mean = 0.0068759
+  rms  = 0.051175
+  PSNR = 25.819
+  max  = 0.45098
   max @ (214, 88, 0, 0)
   warns 2034 fails 2034
-isConstantColor on pink image is (1.0, 0.501960813999176, 0.501960813999176)
+isConstantColor on pink image is (1 0.50196 0.50196)
 isConstantColor on checker is  None
 Is cmul1.exr monochrome?  True
 Is cmul2.exr monochrome?  False
@@ -57,8 +57,6 @@ PASS
 Comparing "flip.tif" and "../../../../testsuite/oiiotool/ref/flip.tif"
 PASS
 Comparing "flop.tif" and "../../../../testsuite/oiiotool/ref/flop.tif"
-PASS
-Comparing "flipflop.tif" and "../../../../testsuite/oiiotool/ref/flipflop.tif"
 PASS
 Comparing "reorient1.tif" and "../../../../testsuite/oiiotool/ref/reorient1.tif"
 PASS
@@ -120,6 +118,8 @@ Comparing "unsharp.tif" and "../../../../testsuite/oiiotool/ref/unsharp.tif"
 PASS
 Comparing "unsharp-median.tif" and "../../../../testsuite/oiiotool/ref/unsharp-median.tif"
 PASS
+Comparing "tahoe-laplacian.tif" and "../../../../testsuite/oiiotool/ref/tahoe-laplacian.tif"
+PASS
 Comparing "fft.exr" and "../../../../testsuite/oiiotool/ref/fft.exr"
 PASS
 Comparing "ifft.exr" and "../../../../testsuite/oiiotool/ref/ifft.exr"
@@ -135,4 +135,6 @@ PASS
 Comparing "a_over_b.exr" and "../../../../testsuite/oiiotool-composite/ref/a_over_b.exr"
 PASS
 Comparing "tahoe-small.tx" and "ref/tahoe-small.tx"
+PASS
+Comparing "text.tif" and "../../../../testsuite/oiiotool-text/ref/text.tif"
 PASS

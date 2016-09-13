@@ -196,7 +196,7 @@ private:
     };
 
     std::string m_filename;
-    std::ifstream m_file;
+    OIIO::ifstream m_file;
     //Current subimage
     int m_subimage;
     //Subimage count (1 + layer count)
@@ -524,6 +524,8 @@ OIIO_EXPORT ImageInput *psd_input_imageio_create () { return new PSDInput; }
 
 OIIO_EXPORT int psd_imageio_version = OIIO_PLUGIN_VERSION;
 
+OIIO_EXPORT const char* psd_imageio_library_version () { return NULL; }
+
 OIIO_EXPORT const char * psd_input_extensions[] = {
     "psd", "pdd", "psb", NULL
 };
@@ -543,12 +545,14 @@ bool
 PSDInput::open (const std::string &name, ImageSpec &newspec)
 {
     m_filename = name;
+
     Filesystem::open (m_file, name, std::ios::binary);
-    if (!m_file.is_open ()) {
+  
+    if (!m_file) {
         error ("\"%s\": failed to open file", name.c_str());
         return false;
     }
-
+    
     // File Header
     if (!load_header ())
         return false;
@@ -759,7 +763,7 @@ void
 PSDInput::init ()
 {
     m_filename.clear ();
-    m_file.close ();
+    m_file.close();
     m_subimage = -1;
     m_subimage_count = 0;
     m_specs.clear ();

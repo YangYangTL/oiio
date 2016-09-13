@@ -60,6 +60,15 @@ OIIO_PLUGIN_NAMESPACE_BEGIN
 OIIO_PLUGIN_EXPORTS_BEGIN
 
     OIIO_EXPORT int jpeg_imageio_version = OIIO_PLUGIN_VERSION;
+    OIIO_EXPORT const char* jpeg_imageio_library_version () {
+#define STRINGIZE2(a) #a
+#define STRINGIZE(a) STRINGIZE2(a)
+#ifdef LIBJPEG_TURBO_VERSION
+        return "jpeg-turbo " STRINGIZE(LIBJPEG_TURBO_VERSION);
+#else
+        return "jpeglib " STRINGIZE(JPEG_LIB_VERSION_MAJOR) "." STRINGIZE(JPEG_LIB_VERSION_MINOR);
+#endif
+    }
     OIIO_EXPORT ImageInput *jpeg_input_imageio_create () {
         return new JpgInput;
     }
@@ -298,7 +307,7 @@ JpgInput::open (const std::string &name, ImageSpec &newspec)
         else if (m->marker == JPEG_COM) {
             if (! m_spec.find_attribute ("ImageDescription", TypeDesc::STRING))
                 m_spec.attribute ("ImageDescription",
-                                  std::string ((const char *)m->data));
+                                  std::string ((const char *)m->data, m->data_length));
         }
     }
 

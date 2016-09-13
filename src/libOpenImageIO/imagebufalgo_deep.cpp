@@ -29,7 +29,6 @@
 */
 
 
-#include <boost/bind.hpp>
 #include <OpenEXR/half.h>
 
 #include <cmath>
@@ -39,6 +38,7 @@
 #include "OpenImageIO/imagebuf.h"
 #include "OpenImageIO/imagebufalgo.h"
 #include "OpenImageIO/imagebufalgo_util.h"
+#include "OpenImageIO/deepdata.h"
 #include "OpenImageIO/dassert.h"
 #include "OpenImageIO/thread.h"
 
@@ -50,14 +50,19 @@ OIIO_NAMESPACE_BEGIN
 // deciphering deep images. Return true if appropriate alphas were found.
 static bool
 find_deep_channels (const ImageSpec &spec, int &alpha_channel,
-                    int &RA_channel, int &GA_channel, int &BA_channel,
+                    int &AR_channel, int &AG_channel, int &AB_channel,
                     int &R_channel, int &G_channel, int &B_channel,
                     int &Z_channel, int &Zback_channel)
 {
-    static const char *names[] = { "A", "RA", "GA", "BA",
-                                   "R", "G", "B", "Z", "Zback", NULL };
-    int *chans[] = { &alpha_channel, &RA_channel, &GA_channel, &BA_channel,
-                     &R_channel, &G_channel, &B_channel, 
+    static const char *names[] = { "A",
+                                   "RA", "GA", "BA", // old OpenEXR recommendation
+                                   "AR", "AG", "AB", // new OpenEXR recommendation
+                                   "R", "G", "B",
+                                   "Z", "Zback", NULL };
+    int *chans[] = { &alpha_channel,
+                     &AR_channel, &AG_channel, &AB_channel,
+                     &AR_channel, &AG_channel, &AB_channel,
+                     &R_channel, &G_channel, &B_channel,
                      &Z_channel, &Zback_channel };
     for (int i = 0;  names[i];  ++i)
         *chans[i] = -1;
@@ -72,7 +77,7 @@ find_deep_channels (const ImageSpec &spec, int &alpha_channel,
     if (Zback_channel < 0)
         Zback_channel = Z_channel;
     return (alpha_channel >= 0 ||
-            (RA_channel >= 0 && GA_channel >= 0 && BA_channel >= 0));
+            (AR_channel >= 0 && AG_channel >= 0 && AB_channel >= 0));
 }
 
 
@@ -87,7 +92,7 @@ flatten_ (ImageBuf &dst, const ImageBuf &src,
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Possible multiple thread case -- recurse via parallel_image
         ImageBufAlgo::parallel_image (
-            boost::bind(flatten_<DSTTYPE>, boost::ref(dst), boost::cref(src),
+            OIIO::bind(flatten_<DSTTYPE>, OIIO::ref(dst), OIIO::cref(src),
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
         return true;
@@ -96,22 +101,22 @@ flatten_ (ImageBuf &dst, const ImageBuf &src,
     const ImageSpec &srcspec (src.spec());
     int nc = srcspec.nchannels;
 
-    int alpha_channel, RA_channel, GA_channel, BA_channel;
+    int alpha_channel, AR_channel, AG_channel, AB_channel;
     int R_channel, G_channel, B_channel;
     int Z_channel, Zback_channel;
     if (! find_deep_channels (srcspec, alpha_channel,
-                              RA_channel, GA_channel, BA_channel,
+                              AR_channel, AG_channel, AB_channel,
                               R_channel, G_channel, B_channel,
                               Z_channel, Zback_channel)) {
         dst.error ("No alpha channel could be identified");
         return false;
     }
     ASSERT (alpha_channel >= 0 ||
-            (RA_channel >= 0 && GA_channel >= 0 && BA_channel >= 0));
+            (AR_channel >= 0 && AG_channel >= 0 && AB_channel >= 0));
     float *val = ALLOCA (float, nc);
-    float &RAval (RA_channel >= 0 ? val[RA_channel] : val[alpha_channel]);
-    float &GAval (GA_channel >= 0 ? val[GA_channel] : val[alpha_channel]);
-    float &BAval (BA_channel >= 0 ? val[BA_channel] : val[alpha_channel]);
+    float &ARval (AR_channel >= 0 ? val[AR_channel] : val[alpha_channel]);
+    float &AGval (AG_channel >= 0 ? val[AG_channel] : val[alpha_channel]);
+    float &ABval (AB_channel >= 0 ? val[AB_channel] : val[alpha_channel]);
 
     for (ImageBuf::Iterator<DSTTYPE> r (dst, roi);  !r.done();  ++r) {
         int x = r.x(), y = r.y(), z = r.z();
@@ -123,8 +128,8 @@ flatten_ (ImageBuf &dst, const ImageBuf &src,
         if (Zback_channel >= 0 && samps == 0)
             val[Zback_channel] = 1.0e30;
         for (int s = 0;  s < samps;  ++s) {
-            float RA = RAval, GA = GAval, BA = BAval;  // make copies
-            float alpha = (RA + GA + BA) / 3.0f;
+            float AR = ARval, AG = AGval, AB = ABval;  // make copies
+            float alpha = (AR + AG + AB) / 3.0f;
             if (alpha >= 1.0f)
                 break;
             for (int c = 0;  c < nc;  ++c) {
@@ -133,11 +138,11 @@ flatten_ (ImageBuf &dst, const ImageBuf &src,
                     val[c] *= alpha;  // because Z are not premultiplied
                 float a;
                 if (c == R_channel)
-                    a = RA;
+                    a = AR;
                 else if (c == G_channel)
-                    a = GA;
+                    a = AG;
                 else if (c == B_channel)
-                    a = BA;
+                    a = AB;
                 else
                     a = alpha;
                 val[c] += (1.0f - a) * v;
@@ -167,7 +172,8 @@ ImageBufAlgo::flatten (ImageBuf &dst, const ImageBuf &src,
     force_spec.deep = false;
     force_spec.channelformats.clear();
 
-    if (! IBAprep (roi, &dst, &src, NULL, &force_spec, IBAprep_SUPPORT_DEEP))
+    if (! IBAprep (roi, &dst, &src, NULL, &force_spec,
+                   IBAprep_SUPPORT_DEEP | IBAprep_DEEP_MIXED))
         return false;
     if (dst.spec().deep) {
         dst.error ("Cannot flatten to a deep image");
@@ -175,10 +181,10 @@ ImageBufAlgo::flatten (ImageBuf &dst, const ImageBuf &src,
     }
 
     const ImageSpec &srcspec (src.spec());
-    int alpha_channel, RA_channel, GA_channel, BA_channel;
+    int alpha_channel, AR_channel, AG_channel, AB_channel;
     int R_channel, G_channel, B_channel, Z_channel, Zback_channel;
     if (! find_deep_channels (srcspec, alpha_channel,
-                              RA_channel, GA_channel, BA_channel,
+                              AR_channel, AG_channel, AB_channel,
                               R_channel, G_channel, B_channel,
                               Z_channel, Zback_channel)) {
         dst.error ("No alpha channel could be identified");
@@ -227,7 +233,8 @@ ImageBufAlgo::deepen (ImageBuf &dst, const ImageBuf &src, float zvalue,
         force_spec.channelnames.push_back ("Z");
     }
 
-    if (! IBAprep (roi, &dst, &src, NULL, &force_spec, IBAprep_SUPPORT_DEEP))
+    if (! IBAprep (roi, &dst, &src, NULL, &force_spec,
+                   IBAprep_SUPPORT_DEEP | IBAprep_DEEP_MIXED))
         return false;
     if (! dst.deep()) {
         dst.error ("Cannot deepen to a flat image");
@@ -259,8 +266,6 @@ ImageBufAlgo::deepen (ImageBuf &dst, const ImageBuf &src, float zvalue,
             dst.set_deep_samples (x, y, z, 1);
     }
 
-    dst.deep_alloc ();
-
     // Now actually set the values
     for (int z = roi.zbegin; z < roi.zend; ++z)
     for (int y = roi.ybegin; y < roi.yend; ++y)
@@ -283,6 +288,55 @@ ImageBufAlgo::deepen (ImageBuf &dst, const ImageBuf &src, float zvalue,
     return ok;
 }
 
+
+
+bool
+ImageBufAlgo::deep_merge (ImageBuf &dst, const ImageBuf &A,
+                          const ImageBuf &B, bool occlusion_cull,
+                          ROI roi, int nthreads)
+{
+    if (! A.deep() || ! B.deep()) {
+        // For some reason, we were asked to merge a flat image.
+        dst.error ("deep_merge can only be performed on deep images");
+        return false;
+    }
+    if (! IBAprep (roi, &dst, &A, &B, NULL, IBAprep_SUPPORT_DEEP))
+        return false;
+    if (! dst.deep()) {
+        dst.error ("Cannot deep_merge to a flat image");
+        return false;
+    }
+
+    // First, set the capacity of the dst image to reserve enough space for
+    // the segments of both source images. It may be that more insertions
+    // are needed, due to overlaps, but those will be compartively fewer
+    // than doing reallocations for every single sample.
+    DeepData &dstdd (*dst.deepdata());
+    const DeepData &Add (*A.deepdata());
+    const DeepData &Bdd (*B.deepdata());
+    for (int z = roi.zbegin; z < roi.zend; ++z)
+    for (int y = roi.ybegin; y < roi.yend; ++y)
+    for (int x = roi.xbegin; x < roi.xend; ++x) {
+        int dstpixel = dst.pixelindex (x, y, z, true);
+        int Apixel = A.pixelindex (x, y, z, true);
+        int Bpixel = B.pixelindex (x, y, z, true);
+        dstdd.set_capacity (dstpixel, Add.capacity(Apixel) + Bdd.capacity(Bpixel));
+    }
+
+    bool ok = ImageBufAlgo::copy (dst, A, TypeDesc::UNKNOWN, roi, nthreads);
+
+    for (int z = roi.zbegin; z < roi.zend; ++z)
+    for (int y = roi.ybegin; y < roi.yend; ++y)
+    for (int x = roi.xbegin; x < roi.xend; ++x) {
+        int dstpixel = dst.pixelindex (x, y, z, true);
+        int Bpixel = B.pixelindex (x, y, z, true);
+        DASSERT (dstpixel >= 0);
+        dstdd.merge_deep_pixels (dstpixel, Bdd, Bpixel);
+        if (occlusion_cull)
+            dstdd.occlusion_cull (dstpixel);
+    }
+    return ok;
+}
 
 
 OIIO_NAMESPACE_END

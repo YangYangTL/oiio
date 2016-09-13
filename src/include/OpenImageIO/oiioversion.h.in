@@ -48,7 +48,7 @@
 // We also define the old name for backwards compatibility purposes.
 #define OPENIMAGEIO_VERSION OIIO_VERSION
 
-// Magic macros to make OPENIMAGEIO_VERSION_STRING that looks like "1.2.3"
+// Magic macros to make OIIO_VERSION_STRING that looks like "1.2.3"
 #define OIIO_MAKE_VERSION_STRING2(a,b,c,d) #a "." #b "." #c #d
 #define OIIO_MAKE_VERSION_STRING(a,b,c,d) OIIO_MAKE_VERSION_STRING2(a,b,c,d)
 #define OIIO_VERSION_STRING \
@@ -105,8 +105,11 @@ namespace OIIO = OIIO_NAMESPACE::OIIO_VERSION_NS;
 ///     from firstchan,nchans to chbegin,chend.
 /// Version 17 changed to int supports(string_view) rather than
 ///     bool supports(const std::string&)). (OIIO 1.6)
+/// Version 18 changed to add an m_threads member to ImageInput/Output.
+/// Version 19 changed the definition of DeepData.
+/// Version 20 added FMT_imageio_library_version() to plugins. (OIIO 1.7)
 
-#define OIIO_PLUGIN_VERSION 17
+#define OIIO_PLUGIN_VERSION 20
 
 #define OIIO_PLUGIN_NAMESPACE_BEGIN OIIO_NAMESPACE_BEGIN
 #define OIIO_PLUGIN_NAMESPACE_END OIIO_NAMESPACE_END
@@ -119,12 +122,10 @@ namespace OIIO = OIIO_NAMESPACE::OIIO_VERSION_NS;
 #define OIIO_PLUGIN_EXPORTS_END }
 #endif
 
-/// OIIO_BUILD_CPP11 will be 1 if this OIIO was built using C++11
+// OIIO_BUILD_CPP11 will be 1 if this OIIO was built using C++11
 #cmakedefine01 OIIO_BUILD_CPP11
-/// OIIO_BUILD_CPP14 will be 1 if this OIIO was built using C++14
+// OIIO_BUILD_CPP14 will be 1 if this OIIO was built using C++14
 #cmakedefine01 OIIO_BUILD_CPP14
-/// OIIO_BUILD_USELIBPLUSPLUS will be 1 if this OIIO was built using libc++
-#cmakedefine01 OIIO_BUILD_LIBCPLUSPLUS
 
 #endif
 

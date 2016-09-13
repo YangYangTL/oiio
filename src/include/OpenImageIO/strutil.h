@@ -206,11 +206,17 @@ std::string OIIO_API join (const std::vector<string_view> &seq,
 std::string OIIO_API join (const std::vector<std::string> &seq,
                            string_view sep = string_view());
 
+/// Repeat a string formed by concatenating str n times.
+std::string OIIO_API repeat (string_view str, int n);
 
+/// Replace a pattern inside a string and return the result. If global is
+/// true, replace all instances of the pattern, otherwise just the first.
+std::string OIIO_API replace (string_view str, string_view pattern,
+                              string_view replacement, bool global=false);
 
 // Helper template to test if a string is a generic type
 template<typename T>
-inline bool string_is (string_view s) {
+inline bool string_is (string_view /*s*/) {
     return false; // Generic: assume there is an explicit specialization
 }
 // Special case for int
@@ -235,22 +241,23 @@ inline T from_string (string_view s) {
 }
 // Special case for int
 template<> inline int from_string<int> (string_view s) {
-    return strtol (s.c_str(), NULL, 10);
+    return s.size() ? strtol (s.c_str(), NULL, 10) : 0;
 }
 // Special case for float
 template<> inline float from_string<float> (string_view s) {
-    return (float)strtod (s.c_str(), NULL);
+    return s.size() ? (float)strtod (s.c_str(), NULL) : 0.0f;
 }
 
 
 
-/// Given a string containing float values separated by a comma (or
-/// optionally another separator), extract the individual values,
-/// placing them into vals[] which is presumed to already contain
-/// defaults.  If only a single value was in the list, replace all
-/// elements of vals[] with the value. Otherwise, replace them in the
-/// same order.  A missing value will simply not be replaced. Return the
-/// number of values found in the list (including blank or malformed ones).
+/// Given a string containing values separated by a comma (or optionally
+/// another separator), extract the individual values, placing them into
+/// vals[] which is presumed to already contain defaults.  If only a single
+/// value was in the list, replace all elements of vals[] with the value.
+/// Otherwise, replace them in the same order.  A missing value will simply
+/// not be replaced. Return the number of values found in the list
+/// (including blank or malformed ones). If the vals vector was empty
+/// initially, grow it as necessary.
 ///
 /// For example, if T=float, suppose initially, vals[] = {0, 1, 2}, then
 ///   "3.14"       results in vals[] = {3.14, 3.14, 3.14}
@@ -260,17 +267,21 @@ template<> inline float from_string<float> (string_view s) {
 /// an explicit constructor from a std::string.
 template<class T>
 int extract_from_list_string (std::vector<T> &vals,
-                               string_view list,
-                               string_view sep = string_view(",",1))
+                              string_view list,
+                              string_view sep = string_view(",",1))
 {
     size_t nvals = vals.size();
     std::vector<string_view> valuestrings;
     Strutil::split (list, valuestrings, sep);
     for (size_t i = 0, e = valuestrings.size(); i < e; ++i) {
-        if (valuestrings[i].size())
+        T v = from_string<T> (valuestrings[i]);
+        if (nvals == 0)
+            vals.push_back (v);
+        else if (valuestrings[i].size())
             vals[i] = from_string<T> (valuestrings[i]);
+        /* Otherwise, empty space between commas, so leave default alone */
     }
-    if (valuestrings.size() == 1) {
+    if (valuestrings.size() == 1 && nvals > 0) {
         vals.resize (1);
         vals.resize (nvals, vals[0]);
     }
@@ -285,7 +296,7 @@ int extract_from_list_string (std::vector<T> &vals,
 /// StringEqual, to build an efficient hash map for char*'s or
 /// std::string's is as follows:
 /// \code
-///    boost::unordered_map <const char *, Key, Strutil::StringHash, Strutil::StringEqual>
+///    unordered_map <const char *, Key, Strutil::StringHash, Strutil::StringEqual>
 /// \endcode
 class StringHash {
 public:
@@ -408,10 +419,8 @@ enum QuoteBehavior { DeleteQuotes, KeepQuotes };
 /// found at the beginning of str, return false and don't modify val or str.
 /// If keep_quotes is true, the surrounding double quotes (if present)
 /// will be kept in val.
-bool OIIO_API parse_string (string_view &str, string_view &val, bool eat/*=true*/,
-                            QuoteBehavior keep_quotes/*=DeleteQuotes*/);
-// DEPRECATED (1.5)
-bool OIIO_API parse_string (string_view &str, string_view &val, bool eat=true);
+bool OIIO_API parse_string (string_view &str, string_view &val, bool eat=true,
+                            QuoteBehavior keep_quotes=DeleteQuotes);
 
 /// Return the first "word" (set of contiguous alphabetical characters) in
 /// str, and additionally modify str to skip over the parsed word if eat is
@@ -466,7 +475,11 @@ string_view OIIO_API parse_nested (string_view &str, bool eat=true);
 /// vector, but C++11 support is not yet stabilized across compilers.
 /// We will eventually add that and deprecate this one, after everybody
 /// is caught up to C++11.
-void OIIO_API utf8_to_unicode (string_view &str, std::vector<uint32_t> &uvec);
+void OIIO_API utf8_to_unicode (string_view str, std::vector<uint32_t> &uvec);
+
+/// Encode the string in base64.
+/// https://en.wikipedia.org/wiki/Base64
+std::string OIIO_API base64_encode (string_view str);
 
 }  // namespace Strutil
 

@@ -43,6 +43,7 @@
 #include "OpenImageIO/strutil.h"
 
 #include "OpenImageIO/imageio.h"
+#include "OpenImageIO/deepdata.h"
 #include "imageio_pvt.h"
 
 #include <boost/scoped_array.hpp>
@@ -50,6 +51,21 @@
 
 OIIO_NAMESPACE_BEGIN
     using namespace pvt;
+
+
+
+ImageOutput::ImageOutput ()
+    : m_threads(0)
+{
+}
+
+
+
+ImageOutput::~ImageOutput ()
+{
+}
+
+
 
 bool
 ImageOutput::write_scanline (int y, int z, TypeDesc format,
@@ -283,6 +299,10 @@ ImageOutput::to_native_rectangle (int xbegin, int xend, int ybegin, int yend,
     // native_data is true if the user is passing data in the native format
     bool native_data = (format == TypeDesc::UNKNOWN ||
                         (format == m_spec.format && !perchanfile));
+    // If user is passing native data and it's all one type, go ahead and
+    // set format correctly.
+    if (format == TypeDesc::UNKNOWN && !perchanfile)
+        format = m_spec.format;
     // If the user is passing native data and they've left xstride set
     // to Auto, then we know it's the native pixel size.
     if (native_data && xstride == AutoStride)
@@ -377,7 +397,7 @@ ImageOutput::to_native_rectangle (int xbegin, int xend, int ybegin, int yend,
     } else {
         // Convert from 'format' to float.
         buf = convert_to_float (data, (float *)&scratch[contiguoussize],
-                                rectangle_values, format);
+                                (int)rectangle_values, format);
     }
 
     if (dither && format.is_floating_point() &&

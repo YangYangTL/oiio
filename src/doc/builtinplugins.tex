@@ -603,6 +603,18 @@ The official OpenEXR site is \url{http://www.openexr.com/}.
   name and apparent type.
 \end{tabular}
 
+\subsubsection*{A note on channel names}
+
+The underlying OpenEXR library (libIlmImf) always saves channels
+into lexicographic order, so the channel order on disk (and thus when
+read!) will NOT match the order when the image was created.
+
+But in order to adhere to OIIO's convention that RGBAZ will always be
+the first channels (if they exist), OIIO's OpenEXR reader will automatically
+reorder just those channels to appear at the front and in that order. All
+other channel names will remain in their relative order as presented to
+OIIO by libIlmImf.
+
 \subsubsection*{Limitations}
 
 \begin{itemize}
@@ -982,10 +994,10 @@ options are supported:
 
 \vspace{.125in}
 
-\noindent\begin{tabular}{p{2.0in}|p{0.5in}|p{2.75in}}
+\noindent\begin{tabular}{p{1.8in}|p{0.5in}|p{2.95in}}
 Configuration attribute & Type & Meaning \\
 \hline
-\qkw{oiio:UnassociatedAlpha} & int & If nonzero, will leave alpha unassociated
+\qkws{oiio:UnassociatedAlpha} & int & If nonzero, will leave alpha unassociated
                                      (versus the default of premultiplying
                                      color channels by alpha if the alpha channel
                                      is unassociated). \\
@@ -998,17 +1010,66 @@ aspects of the writing itself:
 
 \vspace{.125in}
 
-\noindent\begin{tabular}{p{2.0in}|p{0.5in}|p{2.75in}}
+\noindent\begin{tabular}{p{1.8in}|p{0.5in}|p{2.95in}}
 Output attribute & Type & Meaning \\
 \hline
-\qkw{oiio:UnassociatedAlpha} & int & If nonzero, any alpha channel is
+\qkws{oiio:UnassociatedAlpha} & int & If nonzero, any alpha channel is
                                 understood do be unassociated, and the
                                 EXTRASAMPLES tag in the TIFF file will be
                                 set to reflect this). \\
 \qkw{tiff:write_exif} & int & If zero, will not write any Exif data to the
                             TIFF file. (The default is 1.) \\
+\qkw{tiff:half} & int & If nonzero, allow writing TIFF files with `half'
+                (16 bit float) pixels. The default of 0 will automatically
+                translate to float pixels, since most non-OIIO applications
+                will not properly read half TIFF files despite their
+                being legal. \\
+\qkws{tiff:ColorSpace} & string & Requests that the file be
+                        saved with a non-RGB color spaces.
+                        Choices are \qkw{RGB}, \qkw{CMYK}.
+                        % , \qkw{YCbCr}, \qkw{CIELAB}, \qkw{ICCLAB}, \qkw{ITULAB}
+                        \\
+\qkws{tiff:zipquality} & int & A time-vs-quality knob for \qkw{zip}
+        compression, ranging from 1--9 (default is 6). Higher means compress
+        to less space, but taking longer to do so. It is strictly a time
+        vs space tradeoff, the quality is identical (lossless) no matter
+        what the setting.
 \end{tabular}
 
+\newpage
+\subsubsection*{TIFF compression modes}
+
+\noindent The full list of possible TIFF compression mode values are as
+follows ($ ^*$ indicates that \product can write that format, and is not
+part of the format name): \\
+    {\kw none}$ ^*$  ~
+    {\kw lzw}$ ^*$  ~
+    {\kw zip}$ ^*$  ~ \\
+    {\kw ccitt_t4}  ~
+    {\kw ccitt_t6}  ~
+    {\kw ccittfax3}  ~
+    {\kw ccittfax4}  ~
+    {\kw ccittrle2}  ~
+    {\kw ccittrle}$ ^*$  ~
+    {\kw dcs}  ~
+    {\kw isojbig}  ~
+    {\kw IT8BL}  ~
+    {\kw IT8CTPAD}  ~
+    {\kw IT8LW}  ~
+    {\kw IT8MP}  ~
+    {\kw jp2000}  ~
+    {\kw jpeg}$ ^*$  ~
+    {\kw lzma}  ~
+    {\kw next}  ~
+    {\kw ojpeg}  ~
+    {\kw packbits}$ ^*$  ~
+    {\kw pixarfilm}  ~
+    {\kw pixarlog}  ~
+    {\kw sgilog24}  ~
+    {\kw sgilog}  ~
+    {\kw T43}  ~
+    {\kw T85}  ~
+    {\kw thunderscan}  ~
 
 \subsubsection*{Limitations}
 
@@ -1018,10 +1079,15 @@ aware of:
 \item No separate per-channel data formats (not supported by {\cf
   libtiff}).
 \item Only multiples of 8 bits per pixel may be passed through
-  \product's APIs, e.g., 1-, 2-, and 4-bits per pixel will be reported
-  by OIIO as 8 bit images; 12 bits per pixel will be reported as 16,
+  \product's APIs, e.g., 1-, 2-, and 4-bits per pixel will be passed
+  by OIIO as 8 bit images; 12 bits per pixel will be passed as 16,
   etc.  But the \qkw{oiio:BitsPerSample} attribute in the \ImageSpec
-  will correctly report the original bit depth of the file.
+  will correctly report the original bit depth of the file. Similarly
+  for output, you must pass 8 or 16 bit output, but \qkw{oiio:BitsPerSample}
+  gives a hint about how you want it to be when written to the file, and
+  it will try to accommodate the request (for signed integers,
+  TIFF output can accommodate 2, 4, 8, 10, 12, and 16 bits).
+\item JPEG compression is limited to 8-bit per channel, 3-channel files.
 \end{itemize}
 
 
@@ -1054,8 +1120,8 @@ aware of:
 \qkw{fovcot} & float & {\cf PIXAR_FOVCOT} \\
 \qkw{worldtocamera} & matrix & PIXAR\_MATRIX\_WORLDTOCAMERA \\
 \qkw{worldtoscreen} & matrix & PIXAR\_MATRIX\_WORLDTOSCREEN\\
-\qkw{comrpession} & string & based on TIFF Compression 
-  (one of \qkw{none}, \qkw{lzw}, \qkw{ccittrle}, \qkw{zip}, \qkw{packbits}).\\
+\qkw{compression} & string & based on TIFF Compression
+  (one of \qkw{none}, \qkw{lzw}, \qkw{zip}, or others listed above.).\\
 \qkw{tiff:compression} & int & the original integer code
   from the TIFF Compression tag.\\
 \qkw{tiff:planarconfig} & string & PlanarConfiguration (\qkw{separate} or

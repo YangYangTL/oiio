@@ -28,8 +28,6 @@
   (This is the Modified BSD License)
 */
 
-#include <boost/bind.hpp>
-#include <boost/shared_ptr.hpp>
 #include <boost/regex.hpp>
 
 #include <OpenEXR/half.h>
@@ -43,6 +41,7 @@
 #include "OpenImageIO/platform.h"
 #include "OpenImageIO/filter.h"
 #include "OpenImageIO/thread.h"
+#include "OpenImageIO/refcnt.h"
 #include "kissfft.hh"
 
 
@@ -94,18 +93,30 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst, const ImageBuf *A,
             dst->error ("Uninitialized input image");
         return false;
     }
-    int maxchans = 10000;
-    if (prepflags & IBAprep_CLAMP_MUTUAL_NCHANNELS) {
-        // Instructions to clamp chend to the highest of the inputs
-        if (dst && dst->initialized())
-            maxchans = std::min (maxchans, dst->spec().nchannels);
-        if (A && A->initialized())
-            maxchans = std::min (maxchans, A->spec().nchannels);
-        if (B && B->initialized())
-            maxchans = std::min (maxchans, B->spec().nchannels);
-        if (C && C->initialized())
-            maxchans = std::min (maxchans, C->spec().nchannels);
+
+    int minchans, maxchans;
+    if (dst || A || B || C) {
+        minchans = 10000; maxchans = 1;
+        if (dst && dst->initialized()) {
+            minchans = std::min (minchans, dst->spec().nchannels);
+            maxchans = std::max (maxchans, dst->spec().nchannels);
+        }
+        if (A && A->initialized()) {
+            minchans = std::min (minchans, A->spec().nchannels);
+            maxchans = std::max (maxchans, A->spec().nchannels);
+        }
+        if (B && B->initialized()) {
+            minchans = std::min (minchans, B->spec().nchannels);
+            maxchans = std::max (maxchans, B->spec().nchannels);
+        }
+        if (C && C->initialized()) {
+            minchans = std::min (minchans, C->spec().nchannels);
+            maxchans = std::max (maxchans, C->spec().nchannels);
+        }
+    } else {
+        minchans = maxchans = 1;
     }
+
     if (dst->initialized()) {
         // Valid destination image.  Just need to worry about ROI.
         if (roi.defined()) {
@@ -151,11 +162,23 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst, const ImageBuf *A,
         if (A) {
             // If there's an input image, give dst A's spec (with
             // modifications detailed below...)
-            spec = force_spec ? (*force_spec) : A->spec();
+            if (force_spec) {
+                spec = *force_spec;
+            } else {
+                // If dst is uninitialized and no force_spec was supplied,
+                // make it like A, but having number of channels as large as
+                // any of the inputs.
+                spec = A->spec();
+                if (prepflags & IBAprep_MINIMIZE_NCHANNELS)
+                    spec.nchannels = minchans;
+                else
+                    spec.nchannels = maxchans;
+            }
             // For multiple inputs, if they aren't the same data type, punt and
             // allocate a float buffer. If the user wanted something else,
             // they should have pre-allocated dst with their desired format.
-            if (B && A->spec().format != B->spec().format)
+            if ((B && A->spec().format != B->spec().format)
+                    || (prepflags & IBAprep_DST_FLOAT_PIXELS))
                 spec.set_format (TypeDesc::FLOAT);
             if (C && (A->spec().format != C->spec().format ||
                       B->spec().format != C->spec().format))
@@ -193,7 +216,25 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst, const ImageBuf *A,
         }
 
         dst->reset (spec);
+
+        // If we just allocated more channels than the caller will write,
+        // clear the extra channels.
+        if (prepflags & IBAprep_CLAMP_MUTUAL_NCHANNELS)
+            roi.chend = std::min (roi.chend, minchans);
+        roi.chend = std::min (roi.chend, spec.nchannels);
+        if (roi.chbegin > 0) {
+            ROI r = roi;
+            r.chbegin = 0; r.chend = roi.chbegin;
+            ImageBufAlgo::zero (*dst, r, 1);
+        }
+        if (roi.chend < dst->nchannels()) {
+            ROI r = roi;
+            r.chbegin = roi.chend; r.chend = dst->nchannels();
+            ImageBufAlgo::zero (*dst, r, 1);
+        }
     }
+    if (prepflags & IBAprep_CLAMP_MUTUAL_NCHANNELS)
+        roi.chend = std::min (roi.chend, minchans);
     roi.chend = std::min (roi.chend, maxchans);
     if (prepflags & IBAprep_REQUIRE_ALPHA) {
         if (dst->spec().alpha_channel < 0 ||
@@ -231,11 +272,22 @@ ImageBufAlgo::IBAprep (ROI &roi, ImageBuf *dst, const ImageBuf *A,
             return false;
         }
     }
-    if (! (prepflags & IBAprep_SUPPORT_DEEP) &&
-        ((dst && dst->deep()) || (A && A->deep()) ||
-         (B && B->deep()) || (C && C->deep()))) {
-        dst->error ("deep data not supported");
-        return false;
+    if ((dst && dst->deep()) || (A && A->deep()) ||
+        (B && B->deep()) || (C && C->deep())) {
+        // At least one image is deep
+        if (! (prepflags & IBAprep_SUPPORT_DEEP)) {
+            // Error if the operation doesn't support deep images
+            dst->error ("deep images not supported");
+            return false;
+        }
+        if (! (prepflags & IBAprep_DEEP_MIXED)) {
+            // Error if not all images are deep
+            if ((dst && !dst->deep()) || (A && !A->deep()) ||
+                (B && !B->deep()) || (C && !C->deep())) {
+                dst->error ("mixed deep & flat images not supported");
+                return false;
+            }
+        }
     }
     return true;
 }
@@ -287,14 +339,19 @@ convolve_ (ImageBuf &dst, const ImageBuf &src, const ImageBuf &kernel,
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind(convolve_<DSTTYPE,SRCTYPE>, boost::ref(dst),
-                        boost::cref(src), boost::cref(kernel), normalize,
+            OIIO::bind(convolve_<DSTTYPE,SRCTYPE>, OIIO::ref(dst),
+                        OIIO::cref(src), OIIO::cref(kernel), normalize,
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
         return true;
     }
 
     // Serial case
+
+    ASSERT (kernel.spec().format == TypeDesc::FLOAT && kernel.localpixels() &&
+            "kernel should be float and in local memory");
+    ROI kroi = kernel.roi();
+    int kchans = kernel.nchannels();
 
     float scale = 1.0f;
     if (normalize) {
@@ -303,23 +360,23 @@ convolve_ (ImageBuf &dst, const ImageBuf &src, const ImageBuf &kernel,
             scale += k[0];
         scale = 1.0f / scale;
     }
-
     float *sum = ALLOCA (float, roi.chend);
-    ROI kroi = get_roi (kernel.spec());
+
+    // Final case: handle full generality
     ImageBuf::Iterator<DSTTYPE> d (dst, roi);
     ImageBuf::ConstIterator<SRCTYPE> s (src, roi, ImageBuf::WrapClamp);
     for ( ; ! d.done();  ++d) {
-
         for (int c = roi.chbegin; c < roi.chend; ++c)
             sum[c] = 0.0f;
-
-        for (ImageBuf::ConstIterator<float> k (kernel, kroi); !k.done(); ++k) {
-            float kval = k[0];
-            s.pos (d.x() + k.x(), d.y() + k.y(), d.z() + k.z());
+        const float *k = (const float *)kernel.localpixels();
+        s.rerange (d.x() + kroi.xbegin, d.x() + kroi.xend,
+                   d.y() + kroi.ybegin, d.y() + kroi.yend,
+                   d.z() + kroi.zbegin, d.z() + kroi.zend,
+                   ImageBuf::WrapClamp);
+        for ( ; ! s.done(); ++s, k += kchans) {
             for (int c = roi.chbegin; c < roi.chend; ++c)
-                sum[c] += kval * s[c];
+                sum[c] += k[0] * s[c];
         }
-        
         for (int c = roi.chbegin; c < roi.chend; ++c)
             d[c] = scale * sum[c];
     }
@@ -337,9 +394,10 @@ ImageBufAlgo::convolve (ImageBuf &dst, const ImageBuf &src,
     if (! IBAprep (roi, &dst, &src, IBAprep_REQUIRE_SAME_NCHANNELS))
         return false;
     bool ok;
+    // Ensure that the kernel is float and in local memory
     const ImageBuf *K = &kernel;
     ImageBuf Ktmp;
-    if (kernel.spec().format != TypeDesc::FLOAT) {
+    if (kernel.spec().format != TypeDesc::FLOAT || ! kernel.localpixels()) {
         Ktmp.copy (kernel, TypeDesc::FLOAT);
         K = &Ktmp;
     }
@@ -407,20 +465,28 @@ ImageBufAlgo::make_kernel (ImageBuf &dst, string_view name,
                 dfilter[i] = binomial (depth-1, i);
         for (ImageBuf::Iterator<float> p (dst);  ! p.done();  ++p)
             p[0] = wfilter[p.x()-spec.x] * hfilter[p.y()-spec.y] * dfilter[p.z()-spec.z];
+    } else if (Strutil::iequals (name, "laplacian") && w == 3 && h == 3 && d == 1) {
+        const float vals[9] = { 0,  1,  0,
+                                1, -4,  1,
+                                0,  1,  0 };
+        dst.set_pixels (dst.roi(), TypeDesc::FLOAT, vals,
+                        sizeof(float), h*sizeof(float));
+        normalize = false; // sums to zero, so don't normalize it */
     } else {
         // No filter -- make a box
         float val = normalize ? 1.0f / ((w*h*d)) : 1.0f;
         for (ImageBuf::Iterator<float> p (dst);  ! p.done();  ++p)
             p[0] = val;
-        dst.error ("Unknown kernel \"%s\"", name);
+        dst.error ("Unknown kernel \"%s\" %gx%g", name, width, height);
         return false;
     }
     if (normalize) {
         float sum = 0;
         for (ImageBuf::Iterator<float> p (dst);  ! p.done();  ++p)
             sum += p[0];
-        for (ImageBuf::Iterator<float> p (dst);  ! p.done();  ++p)
-            p[0] = p[0] / sum;
+        if (sum != 0.0f)  /* don't normalize a 0-sum kernel */
+            for (ImageBuf::Iterator<float> p (dst);  ! p.done();  ++p)
+                p[0] = p[0] / sum;
     }
     return true;
 }
@@ -437,7 +503,7 @@ threshold_to_zero (ImageBuf &dst, float threshold,
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind(threshold_to_zero, boost::ref(dst), threshold,
+            OIIO::bind(threshold_to_zero, OIIO::ref(dst), threshold,
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
         return true;
@@ -508,6 +574,26 @@ ImageBufAlgo::unsharp_mask (ImageBuf &dst, const ImageBuf &src,
 
 
 
+bool
+ImageBufAlgo::laplacian (ImageBuf &dst, const ImageBuf &src,
+                         ROI roi, int nthreads)
+{
+    if (! IBAprep (roi, &dst, &src,
+            IBAprep_REQUIRE_SAME_NCHANNELS | IBAprep_NO_SUPPORT_VOLUME))
+        return false;
+
+    ImageBuf K;
+    if (! make_kernel (K, "laplacian", 3, 3)) {
+        dst.error ("%s", K.geterror());
+        return false;
+    }
+    // K.write ("K.exr");
+    bool ok = convolve (dst, src, K, false, roi, nthreads);
+    return ok;
+}
+
+
+
 template<class Rtype, class Atype>
 static bool
 median_filter_impl (ImageBuf &R, const ImageBuf &A, int width, int height,
@@ -516,8 +602,8 @@ median_filter_impl (ImageBuf &R, const ImageBuf &A, int width, int height,
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Possible multiple thread case -- recurse via parallel_image
         ImageBufAlgo::parallel_image (
-            boost::bind(median_filter_impl<Rtype,Atype>,
-                        boost::ref(R), boost::cref(A),
+            OIIO::bind(median_filter_impl<Rtype,Atype>,
+                        OIIO::ref(R), OIIO::cref(A),
                         width, height, _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
         return true;
@@ -583,6 +669,102 @@ ImageBufAlgo::median_filter (ImageBuf &dst, const ImageBuf &src,
 
 
 
+enum MorphOp { MorphDilate, MorphErode };
+
+template<class Rtype, class Atype>
+static bool
+morph_impl (ImageBuf &R, const ImageBuf &A, int width, int height,
+            MorphOp op, ROI roi, int nthreads)
+{
+    if (nthreads != 1 && roi.npixels() >= 1000) {
+        // Possible multiple thread case -- recurse via parallel_image
+        ImageBufAlgo::parallel_image (
+            OIIO::bind(morph_impl<Rtype,Atype>,
+                        OIIO::ref(R), OIIO::cref(A),
+                        width, height, op, _1 /*roi*/, 1 /*nthreads*/),
+            roi, nthreads);
+        return true;
+    }
+
+    if (width < 1)
+        width = 1;
+    if (height < 1)
+        height = width;
+    int w_2 = std::max (1, width/2);
+    int h_2 = std::max (1, height/2);
+    int nchannels = R.nchannels();
+    float *vals = OIIO_ALLOCA (float, nchannels);
+
+    ImageBuf::ConstIterator<Atype> a (A, roi);
+    for (ImageBuf::Iterator<Rtype> r (R, roi);  !r.done();  ++r) {
+        a.rerange (r.x()-w_2, r.x()-w_2+width,
+                   r.y()-h_2, r.y()-h_2+height,
+                   r.z(), r.z()+1, ImageBuf::WrapClamp);
+        if (op == MorphDilate) {
+            for (int c = 0; c < nchannels; ++c)
+                vals[c] = -std::numeric_limits<float>::max();
+            for ( ;  ! a.done(); ++a) {
+                if (a.exists()) {
+                    for (int c = 0;  c < nchannels;  ++c)
+                        vals[c] = std::max(vals[c], a[c]);
+                }
+            }
+        } else if (op == MorphErode) {
+            for (int c = 0; c < nchannels; ++c)
+                vals[c] = std::numeric_limits<float>::max();
+            for ( ;  ! a.done(); ++a) {
+                if (a.exists()) {
+                    for (int c = 0;  c < nchannels;  ++c)
+                        vals[c] = std::min(vals[c], a[c]);
+                }
+            }
+        } else {
+            ASSERT (0 && "Unknown morphological operator");
+        }
+        for (int c = 0;  c < nchannels;  ++c)
+            r[c] = vals[c];
+    }
+    return true;
+}
+
+
+
+bool
+ImageBufAlgo::dilate (ImageBuf &dst, const ImageBuf &src,
+                      int width, int height, ROI roi, int nthreads)
+{
+    if (! IBAprep (roi, &dst, &src,
+            IBAprep_REQUIRE_SAME_NCHANNELS | IBAprep_NO_SUPPORT_VOLUME))
+        return false;
+
+    bool ok;
+    OIIO_DISPATCH_COMMON_TYPES2 (ok, "dilate",
+                                 morph_impl, dst.spec().format,
+                                 src.spec().format, dst, src,
+                                 width, height, MorphDilate, roi, nthreads);
+    return ok;
+}
+
+
+
+bool
+ImageBufAlgo::erode (ImageBuf &dst, const ImageBuf &src,
+                      int width, int height, ROI roi, int nthreads)
+{
+    if (! IBAprep (roi, &dst, &src,
+            IBAprep_REQUIRE_SAME_NCHANNELS | IBAprep_NO_SUPPORT_VOLUME))
+        return false;
+
+    bool ok;
+    OIIO_DISPATCH_COMMON_TYPES2 (ok, "erode",
+                                 morph_impl, dst.spec().format,
+                                 src.spec().format, dst, src,
+                                 width, height, MorphErode, roi, nthreads);
+    return ok;
+}
+
+
+
 // Helper function: fft of the horizontal rows
 static bool
 hfft_ (ImageBuf &dst, const ImageBuf &src, bool inverse, bool unitary,
@@ -599,7 +781,7 @@ hfft_ (ImageBuf &dst, const ImageBuf &src, bool inverse, bool unitary,
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind (hfft_, boost::ref(dst), boost::cref(src),
+            OIIO::bind (hfft_, OIIO::ref(dst), OIIO::cref(src),
                          inverse, unitary,
                          _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
@@ -765,7 +947,7 @@ polar_to_complex_impl (ImageBuf &R, const ImageBuf &A, ROI roi, int nthreads)
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Possible multiple thread case -- recurse via parallel_image
         ImageBufAlgo::parallel_image (
-            boost::bind(polar_to_complex_impl<Rtype,Atype>, boost::ref(R), boost::cref(A),
+            OIIO::bind(polar_to_complex_impl<Rtype,Atype>, OIIO::ref(R), OIIO::cref(A),
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
         return true;
@@ -792,7 +974,7 @@ complex_to_polar_impl (ImageBuf &R, const ImageBuf &A, ROI roi, int nthreads)
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Possible multiple thread case -- recurse via parallel_image
         ImageBufAlgo::parallel_image (
-            boost::bind(complex_to_polar_impl<Rtype,Atype>, boost::ref(R), boost::cref(A),
+            OIIO::bind(complex_to_polar_impl<Rtype,Atype>, OIIO::ref(R), OIIO::cref(A),
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
         return true;
@@ -871,7 +1053,7 @@ divide_by_alpha (ImageBuf &dst, ROI roi, int nthreads)
     if (nthreads != 1 && roi.npixels() >= 1000) {
         // Lots of pixels and request for multi threads? Parallelize.
         ImageBufAlgo::parallel_image (
-            boost::bind(divide_by_alpha, boost::ref(dst),
+            OIIO::bind(divide_by_alpha, OIIO::ref(dst),
                         _1 /*roi*/, 1 /*nthreads*/),
             roi, nthreads);
         return true;
@@ -919,7 +1101,7 @@ ImageBufAlgo::fillholes_pushpull (ImageBuf &dst, const ImageBuf &src,
     // We generate a bunch of temp images to form an image pyramid.
     // These give us a place to stash them and make sure they are
     // auto-deleted when the function exits.
-    std::vector<boost::shared_ptr<ImageBuf> > pyramid;
+    std::vector<OIIO::shared_ptr<ImageBuf> > pyramid;
 
     // First, make a writeable copy of the original image (converting
     // to float as a convenience) as the top level of the pyramid.
@@ -927,7 +1109,7 @@ ImageBufAlgo::fillholes_pushpull (ImageBuf &dst, const ImageBuf &src,
     topspec.set_format (TypeDesc::FLOAT);
     ImageBuf *top = new ImageBuf (topspec);
     paste (*top, topspec.x, topspec.y, topspec.z, 0, src);
-    pyramid.push_back (boost::shared_ptr<ImageBuf>(top));
+    pyramid.push_back (OIIO::shared_ptr<ImageBuf>(top));
 
     // Construct the rest of the pyramid by successive x/2 resizing and
     // then dividing nonzero alpha pixels by their alpha (this "spreads
@@ -940,7 +1122,7 @@ ImageBufAlgo::fillholes_pushpull (ImageBuf &dst, const ImageBuf &src,
         ImageBuf *small = new ImageBuf (smallspec);
         ImageBufAlgo::resize (*small, *pyramid.back(), "triangle");
         divide_by_alpha (*small, get_roi(smallspec), nthreads);
-        pyramid.push_back (boost::shared_ptr<ImageBuf>(small));
+        pyramid.push_back (OIIO::shared_ptr<ImageBuf>(small));
         //debug small->save();
     }
 

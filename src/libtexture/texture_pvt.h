@@ -82,24 +82,24 @@ public:
         return attribute (name, TypeDesc::STRING, &s);
     }
 
-    virtual bool getattribute (string_view name, TypeDesc type, void *val);
-    virtual bool getattribute (string_view name, int &val) {
+    virtual bool getattribute (string_view name, TypeDesc type, void *val) const;
+    virtual bool getattribute (string_view name, int &val) const {
         return getattribute (name, TypeDesc::INT, &val);
     }
-    virtual bool getattribute (string_view name, float &val) {
+    virtual bool getattribute (string_view name, float &val) const {
         return getattribute (name, TypeDesc::FLOAT, &val);
     }
-    virtual bool getattribute (string_view name, double &val) {
+    virtual bool getattribute (string_view name, double &val) const {
         float f;
         bool ok = getattribute (name, TypeDesc::FLOAT, &f);
         if (ok)
             val = f;
         return ok;
     }
-    virtual bool getattribute (string_view name, char **val) {
+    virtual bool getattribute (string_view name, char **val) const {
         return getattribute (name, TypeDesc::STRING, val);
     }
-    virtual bool getattribute (string_view name, std::string &val) {
+    virtual bool getattribute (string_view name, std::string &val) const {
         const char *s;
         bool ok = getattribute (name, TypeDesc::STRING, &s);
         if (ok)
@@ -107,8 +107,6 @@ public:
         return ok;
     }
 
-
-    virtual void clear () { }
 
     // Retrieve options
     void get_commontoworld (Imath::M44f &result) const {
@@ -129,7 +127,7 @@ public:
 
     virtual TextureHandle *get_texture_handle (ustring filename,
                                                Perthread *thread) {
-        PerThreadInfo *thread_info = thread ? (PerThreadInfo *)thread
+        PerThreadInfo *thread_info = thread ? ((PerThreadInfo *)thread)
                                        : m_imagecache->get_perthread_info ();
         return (TextureHandle *) find_texturefile (filename, thread_info);
     }
@@ -321,7 +319,17 @@ private:
         texturefile = m_imagecache->verify_file (texturefile, thread_info);
         if (!texturefile || texturefile->broken()) {
             std::string err = m_imagecache->geterror();
-            error ("%s", err.size() ? err.c_str() : "(unknown error)");
+            if (err.size())
+                error ("%s", err.c_str());
+#if 0
+            // If the file is "broken", at least one verbose error message
+            // has already been issued about it, so don't belabor the point.
+            // But for debugging purposes, these might help:
+            else if (texturefile && texturefile->broken())
+                error ("(unknown error - broken texture \"%s\")", texturefile->filename());
+            else
+                error ("(unknown error - NULL texturefile)");
+#endif
         }
         return texturefile;
     }
@@ -523,6 +531,9 @@ private:
     Imath::M44f m_Mw2c;          ///< world-to-"common" matrix
     Imath::M44f m_Mc2w;          ///< common-to-world matrix
     bool m_gray_to_rgb;          ///< automatically copy gray to rgb channels?
+    bool m_flip_t;               ///< Flip direction of t coord?
+    int m_max_tile_channels;     ///< narrow tile ID channel range when
+                                 ///<   the file has more channels
     /// Saved error string, per-thread
     ///
     mutable thread_specific_ptr< std::string > m_errormessage;

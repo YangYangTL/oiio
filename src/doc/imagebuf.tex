@@ -158,7 +158,6 @@ resolution, data type, metadata, etc.).  Optionally, you may name the
 \apiend
 
 \apiitem{bool make_writeable (bool keep_cache_type = false)}
-\NEW % 1.6
 Force the \ImageBuf to be writeable. That means that if it was previously
 backed by an \ImageCache (storage was {\cf IMAGECACHE}), it will force a
 full read so that the whole image is in local memory.
@@ -437,6 +436,20 @@ have correct knowledge of its pixel memory layout.  USE WITH EXTREME
 CAUTION.
 \apiend
 
+\apiitem{void {\ce threads} (int n) \\
+int {\ce threads} () const}
+\index{threads}
+Get or set the threading policy for this \ImageBuf, controlling the
+maximum amount of parallelizing thread ``fan-out'' that might occur during
+expensive operations. The default of 0 means that the global
+{\cf attribute("threads")} value should be used (which itself defaults to
+using as many threads as cores; see Section~\ref{sec:attribute:threads}).
+
+The main reason to change this value is to set it to 1 to indicate that the
+calling thread should do all the work rather than spawning new threads. That
+is probably the desired behavior in situations where the calling application
+has already spawned multiple worker threads.
+\apiend
 
 
 \section{Copying \ImageBuf's and blocks of pixels}
@@ -466,7 +479,6 @@ Swaps the entire contents of {\cf other} and {\cf this}.
   \bigspc\bigspc                void *result, stride_t xstride=AutoStride,\\
   \bigspc\bigspc                stride_t ystride=AutoStride, \\
   \bigspc\bigspc                stride_t zstride=AutoStride) const}
-\NEW % 1.6
 Retrieve the rectangle of pixels specified by ROI, at the current subimage
 and MIP-map level, storing the pixel values beginning at the address
 specified by {\cf result} and with the given strides (by default, {\cf
@@ -521,7 +533,6 @@ return {\cf false}.
   \bigspc\bigspc                const void *result, stride_t xstride=AutoStride,\\
   \bigspc\bigspc                stride_t ystride=AutoStride, \\
   \bigspc\bigspc                stride_t zstride=AutoStride)}
-\NEW  % 1.6
 Copy the rectangle of data into the specified ROI of the ImageBuf. The data
 points to values specified by {\cf format}, with layout detailed by the
 stride values (in bytes, with {\cf AutoStride} indicating ``contiguous''
@@ -609,20 +620,53 @@ are no deep samples for that pixel (including if the pixel coordinates
 are outside the data area).  For non-deep images, it will always return 0.
 \apiend
 
-\apiitem{const void *{\ce deep_pixel_ptr} (int x, int y, int z, int c) const}
-Returns a pointer to the raw array of deep samples for channel {\cf c}
-of pixel {\cf (x,y,z)}.  This will return {\cf NULL} if the pixel
-coordinates or channel number are out of range, if the pixel/channel has
-no deep samples, or if the image is not deep.
+\apiitem{void {\ce set_deep_samples} (int x, int y, int z, int nsamples)}
+Set the number of samples for pixel {\cf (x,y,z)}. If data has already been
+allocated, this is equivalent to inserting or erasing samples.
 \apiend
 
+\apiitem{void {\ce deep_insert_samples} (int x, int y, int z, int samplepos, int nsamples)}
+\NEW % 1.7
+Insert {\cf nsamples} new samples, starting at position {\cf samplepos} of
+pixel {\cf (x,y,z)}.
+\apiend
 
-\apiitem{float {\ce deep_value} (int x, int y, int z, int c, int s) const}
-Return the value (as a {\cf float}) of sample {\cf s} of channel {\cf c}
-of pixel {\cf (x,y,z)}.  Return {\cf 0.0} if not a deep image or if the
+\apiitem{void {\ce deep_erase_samples} (int x, int y, int z, int samplepos, int nsamples)}
+\NEW % 1.7
+Remove {\cf nsamples} new samples, starting at position {\cf samplepos} of
+pixel {\cf (x,y,z)}.
+\apiend
+
+\apiitem{float {\ce deep_value} (int x, int y, int z, int c, int s) const \\
+uint32_t {\ce deep_value_uint} (int x, int y, int z, int c, int s) const}
+Return the value of sample {\cf s} of channel {\cf c}
+of pixel {\cf (x,y,z)}.  Return {\cf 0} if not a deep image or if the
 pixel coordinates, channel number, or sample number are out of range, or
-if it has no deep samples.
+if it has no deep samples.  You are expected to call the {\cf float} or
+{\cf uint32_t} version based on the data type of channel {\cf c}.
 \apiend
+
+\apiitem{void {\ce set_deep_value} (int x, int y, int z, int c, int s, float value) const \\
+void {\ce set_deep_value} (int x, int y, int z, int c, int s, uint32_t value) const}
+Set the value of sample {\cf s} of channel {\cf c}
+of pixel {\cf (x,y,z)}. It is expected that you choose the {\cf float}
+or {\cf uint32_t} variety of the call based on the data type of channel {\cf c}.
+\apiend
+
+\apiitem{const void *{\ce deep_pixel_ptr} (int x, int y, int z, int c, int s=0) const}
+Returns a pointer to the raw pixel data pixel {\cf (x,y,z)}, channel {\cf c},
+sample {\cf s}.  This will return {\cf NULL} if the pixel
+coordinates or channel number are out of range, if the pixel/channel has
+no deep samples, or if the image is not deep. Use with caution --- these
+pointers may be invalidated by calls that adjust the number of samples in
+any pixel.
+\apiend
+
+\apiitem{DeepData\& {\ce deepdata} () \\
+const DeepData\& {\ce deepdata} () const}
+Returns a reference to the underlying {\cf DeepData} for a deep image.
+\apiend
+
 
 \section{Miscellaneous}
 
@@ -654,6 +698,12 @@ void *{\ce pixeladdr} (int x, int y, int z)}
 Return the address where pixel (x,y,z) is stored in the image buffer.
 Use with extreme caution!  Will return NULL if the pixel values
 aren't local (for example, if backed by an \ImageCache).
+\apiend
+
+\apiitem{int {\ce pixelindex} (int x, int y, int z, bool check_range=false) const}
+\NEW %1.7
+Return the index of pixel (x,y,z). If {\cf check_range} is {\cf true},
+return -1 for an invalid coordinate that is not within the data window.
 \apiend
 
 
@@ -784,7 +834,8 @@ samples for the current pixel. This only is useful if the \ImageBuf has
 not yet had the {\cf deep_alloc()} method called.
 \apiend
 
-\apiitem{USERT Iterator::deep_value (int c, int s) const}
+\apiitem{USERT Iterator::deep_value (int c, int s) const \\
+uint32_t Iterator::deep_value_int (int c, int s) const}
 For deep images only, returns the value of channel {\cf c}, sample
 number {\cf s}, at the current pixel.
 \apiend

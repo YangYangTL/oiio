@@ -48,7 +48,11 @@ python_array_code (TypeDesc format)
     case TypeDesc::INT32 :  return "i";
     case TypeDesc::FLOAT :  return "f";
     case TypeDesc::DOUBLE : return "d";
-    default :               return "f";   // Punt -- return float
+    case TypeDesc::HALF :   return "H";  // Return half in uint16
+    default :
+        // For any other type, including UNKNOWN, pack it into an
+        // unsigned byte array.
+        return "B";
     }
 }
 
@@ -78,15 +82,19 @@ typedesc_from_python_array_code (char code)
 object
 C_array_to_Python_array (const char *data, TypeDesc type, size_t size)
 {
-    // Construct a Python array, convert the buffer we read into a string
-    // and then into the array.
+    // Figure out what kind of array to return and create it
     object arr_module(handle<>(PyImport_ImportModule("array")));
     object array = arr_module.attr("array")(python_array_code(type));
+
+    // Create a Python byte array (or string for Python2) to hold the
+    // data.
 #if PY_MAJOR_VERSION >= 3
     object string_py(handle<>(PyBytes_FromStringAndSize(data, size)));
 #else
     object string_py(handle<>(PyString_FromStringAndSize(data, size)));
 #endif
+
+    // Copy the data from the string to the array, then return the array.
 #if (PY_MAJOR_VERSION < 3) || (PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION < 2)
     array.attr("fromstring")(string_py);
 #else
@@ -230,6 +238,80 @@ oiio_attribute_tuple_typed (const std::string &name,
 
 
 
+static object
+oiio_getattribute_typed (const std::string &name, TypeDesc type)
+{
+    if (type == TypeDesc::UNKNOWN)
+        return object();
+    char *data = OIIO_ALLOCA(char, type.size());
+    if (OIIO::getattribute (name, type, data)) {
+        if (type.basetype == TypeDesc::INT) {
+#if PY_MAJOR_VERSION >= 3
+            return C_to_val_or_tuple ((const int *)data, type, PyLong_FromLong);
+#else
+            return C_to_val_or_tuple ((const int *)data, type, PyInt_FromLong);
+#endif
+        }
+        if (type.basetype == TypeDesc::FLOAT) {
+            return C_to_val_or_tuple ((const float *)data, type, PyFloat_FromDouble);
+        }
+        if (type.basetype == TypeDesc::STRING) {
+#if PY_MAJOR_VERSION >= 3
+            return C_to_val_or_tuple ((const char **)data, type, PyUnicode_FromString);
+#else
+            return C_to_val_or_tuple ((const char **)data, type, PyString_FromString);
+#endif
+        }
+    }
+    return object();
+}
+
+
+static int
+oiio_get_int_attribute (const char *name)
+{
+    return OIIO::get_int_attribute (name);
+}
+
+
+static int
+oiio_get_int_attribute_d (const char *name, int defaultval)
+{
+    return OIIO::get_int_attribute (name, defaultval);
+}
+
+
+static float
+oiio_get_float_attribute (const char *name)
+{
+    return OIIO::get_float_attribute (name);
+}
+
+
+static float
+oiio_get_float_attribute_d (const char *name, float defaultval)
+{
+    return OIIO::get_float_attribute (name, defaultval);
+}
+
+
+static std::string
+oiio_get_string_attribute (const char *name)
+{
+    return OIIO::get_string_attribute (name);
+}
+
+
+static std::string
+oiio_get_string_attribute_d (const char *name, const char *defaultval)
+{
+    return OIIO::get_string_attribute (name, defaultval);
+}
+
+
+
+
+
 const void *
 python_array_address (numeric::array &data, TypeDesc &elementtype,
                       size_t &numelements)
@@ -290,13 +372,20 @@ OIIO_DECLARE_PYMODULE(OIIO_PYMODULE_NAME) {
 
     declare_imagebufalgo();
     
-    // Global (OpenImageIO scope) functiona and symbols
+    // Global (OpenImageIO scope) functions and symbols
+    def("geterror",     &OIIO::geterror);
     def("attribute",    &oiio_attribute_float);
     def("attribute",    &oiio_attribute_int);
     def("attribute",    &oiio_attribute_string);
     def("attribute",    &oiio_attribute_typed);
     def("attribute",    &oiio_attribute_tuple_typed);
-    def("geterror",     &OIIO::geterror);
+    def("get_int_attribute",    &oiio_get_int_attribute);
+    def("get_int_attribute",    &oiio_get_int_attribute_d);
+    def("get_float_attribute",  &oiio_get_float_attribute);
+    def("get_float_attribute",  &oiio_get_float_attribute_d);
+    def("get_string_attribute", &oiio_get_string_attribute);
+    def("get_string_attribute", &oiio_get_string_attribute_d);
+    def("getattribute",         &oiio_getattribute_typed);
     scope().attr("AutoStride") = AutoStride;
     scope().attr("openimageio_version") = OIIO_VERSION;
     scope().attr("VERSION") = OIIO_VERSION;

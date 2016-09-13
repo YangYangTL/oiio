@@ -7,6 +7,7 @@ import platform
 import subprocess
 import difflib
 import filecmp
+import shutil
 
 from optparse import OptionParser
 
@@ -41,19 +42,40 @@ tmpdir = "."
 tmpdir = os.path.abspath (tmpdir)
 
 refdir = "ref/"
+refdirlist = [ refdir ]
 parent = "../../../../../"
+test_source_dir = "../../../../testsuite/" + os.path.basename(os.path.abspath(srcdir))
 
 command = ""
 outputs = [ "out.txt" ]    # default
 failureok = 0
 failthresh = 0.004
-hardfail = 0.01
+hardfail = 0.012
 failpercent = 0.02
 
-#print ("srcdir = " + srcdir)
-#print ("tmpdir = " + tmpdir)
-#print ("path = " + path)
-#print ("refdir = " + refdir)
+image_extensions = [ ".tif", ".tx", ".exr", ".jpg", ".png", ".rla", ".dpx" ]
+
+# print ("srcdir = " + srcdir)
+# print ("tmpdir = " + tmpdir)
+# print ("path = " + path)
+# print ("refdir = " + refdir)
+# print ("test source dir = " + test_source_dir)
+
+if platform.system() == 'Windows' :
+    if not os.path.exists("./ref") :
+        shutil.copytree (os.path.join (test_source_dir, "ref"), "./ref")
+    if os.path.exists (os.path.join (test_source_dir, "src")) and not os.path.exists("./src") :
+        shutil.copytree (os.path.join (test_source_dir, "src"), "./src")
+    # if not os.path.exists("../common") :
+    #     shutil.copytree ("../../../testsuite/common", "..")
+else :
+    if not os.path.exists("./ref") :
+        os.symlink (os.path.join (test_source_dir, "ref"), "./ref")
+    if os.path.exists (os.path.join (test_source_dir, "src")) and not os.path.exists("./src") :
+        os.symlink (os.path.join (test_source_dir, "src"), "./src")
+    if not os.path.exists("../common") :
+        os.symlink ("../../../testsuite/common", "../common")
+
 
 ###########################################################################
 
@@ -84,6 +106,10 @@ def text_diff (fromfile, tofile, diff_file=None):
     if diff_file:
         try:
             open (diff_file, 'w').writelines (diff_lines)
+
+            print ("Diff " + fromfile + " vs " + tofile + " was:\n-------")
+#            print (diff)
+            print ("".join(diff_lines))
         except:
             print ("Unexpected error:", sys.exc_info()[0])
     return 1
@@ -127,6 +153,7 @@ def diff_command (fileA, fileB, extraargs="", silent=False, concat=True) :
                + " -failpercent " + str(failpercent)
                + " -hardfail " + str(hardfail)
                + " -warn " + str(2*failthresh)
+               + " -warnpercent " + str(failpercent)
                + " " + extraargs + " " + oiio_relpath(fileA,tmpdir) 
                + " " + oiio_relpath(fileB,tmpdir))
     if not silent :
@@ -200,6 +227,43 @@ def oiiotool (args, silent=False, concat=True) :
 
 
 
+# Check one output file against reference images in a list of reference
+# directories. For each directory, it will first check for a match under
+# the identical name, and if that fails, it will look for alternatives of
+# the form "basename-*.ext".
+def checkref (name, refdirlist) :
+    # Break the output into prefix+extension
+    (prefix, extension) = os.path.splitext(name)
+    ok = 0
+    for ref in refdirlist :
+        # We will first compare name to ref/name, and if that fails, we will
+        # compare it to everything else that matches ref/prefix-*.extension.
+        # That allows us to have multiple matching variants for different
+        # platforms, etc.
+        defaulttest = os.path.join(ref,name)
+        for testfile in ([defaulttest] + glob.glob (os.path.join (ref, prefix+"-*"+extension))) :
+            if not os.path.exists(testfile) :
+                continue
+            # print ("comparing " + name + " to " + testfile)
+            if extension in image_extensions :
+                # images -- use idiff
+                cmpcommand = diff_command (name, testfile, concat=False, silent=True)
+                cmpresult = os.system (cmpcommand)
+            elif extension == ".txt" :
+                cmpresult = text_diff (name, testfile, name + ".diff")
+            else :
+                # anything else
+                cmpresult = 0
+                if os.path.exists(testfile) and filecmp.cmp (name, testfile) :
+                    cmpresult = 0
+                else :
+                    cmpresult = 1
+            if cmpresult == 0 :
+                return (True, testfile)   # we're done
+    return (False, defaulttest)
+
+
+
 # Run 'command'.  For each file in 'outputs', compare it to the copy
 # in 'ref/'.  If all outputs match their reference copies, return 0
 # to pass.  If any outputs do not match their references return 1 to
@@ -232,33 +296,29 @@ def runtest (command, outputs, failureok=0) :
             err = 1
 
     for out in outputs :
-        extension = os.path.splitext(out)[1]
-        ok = 0
-        # We will first compare out to ref/out, and if that fails, we
-        # will compare it to everything else with the same extension in
-        # the ref directory.  That allows us to have multiple matching
-        # variants for different platforms, etc.
-        for testfile in (["ref/"+out] + glob.glob (os.path.join ("ref", "*"+extension))) :
-            # print ("comparing " + out + " to " + testfile)
-            if extension == ".tif" or extension == ".exr" or extension == ".jpg" or extension == ".png":
-                # images -- use idiff
-                cmpcommand = diff_command (out, testfile, concat=False)
-                # print ("cmpcommand = " + cmpcommand)
-                cmpresult = os.system (cmpcommand)
-            elif extension == ".txt" :
-                cmpresult = text_diff (out, testfile, out + ".diff")
-            else :
-                # anything else
-                cmpresult = 0 if filecmp.cmp (out, testfile) else 1
-            if cmpresult == 0 :
-                print ("PASS: " + out + " matches " + testfile)
-                ok = 1
-                break      # we're done
+        (prefix, extension) = os.path.splitext(out)
+        (ok, testfile) = checkref (out, refdirlist)
 
-        if ok == 0:
+        if ok :
+            if extension in image_extensions :
+                # If we got a match for an image, save the idiff results
+                os.system (diff_command (out, testfile, silent=False))
+            print ("PASS: " + out + " matches " + testfile)
+        else :
             err = 1
             print ("NO MATCH for " + out)
             print ("FAIL " + out)
+            if extension == ".txt" :
+                # If we failed to get a match for a text file, print the
+                # file and the diff, for easy debugging.
+                print ("-----" + out + "----->")
+                print (open(out,'r').read() + "<----------")
+                print ("Diff was:\n-------")
+                print (open (out+".diff", 'rU').read())
+            if extension in image_extensions :
+                # If we failed to get a match for an image, send the idiff
+                # results to the console
+                os.system (diff_command (out, testfile, silent=False))
 
     return (err)
 
@@ -271,9 +331,19 @@ def runtest (command, outputs, failureok=0) :
 # Read the individual run.py file for this test, which will define 
 # command and outputs.
 #
-with open("run.py") as f:
+with open(os.path.join(test_source_dir,"run.py")) as f:
     code = compile(f.read(), "run.py", 'exec')
     exec (code)
+
+# Allow a little more slop for slight pixel differences when in DEBUG
+# mode or when running on remote Travis-CI or Appveyor machines.
+if (("TRAVIS" in os.environ and os.environ["TRAVIS"]) or
+    ("APPVEYOR" in os.environ and os.environ["APPVEYOR"]) or
+    ("DEBUG" in os.environ and os.environ["DEBUG"])) :
+    failthresh *= 2.0
+    hardfail *= 2.0
+    failpercent *= 2.0
+
 
 # Run the test and check the outputs
 ret = runtest (command, outputs, failureok=failureok)
