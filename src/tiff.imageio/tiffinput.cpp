@@ -69,7 +69,12 @@ struct TIFF_tag_info {
     TIFFDataType tifftype;  // Data type that TIFF wants
 };
 
+extern "C" {
+#define XMD_H
+#include "jpeglib.h"
+#undef XMD_H
 
+}
 
 // Note about MIP-maps versus subimages: 
 //

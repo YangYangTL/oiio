@@ -361,9 +361,15 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
                     std::cerr << "ignore" << iimtag[i].name<<" type:" << p->type() << "\n";
                     // ignore it, currently writing IPTC:RecordVersioin will result corrupted Adobe Data
                 }
+                else if (Strutil::istarts_with(iimtag[i].name, "IPTC:DateCreated")){
+                   
+                 //   encode_iptc_iim_one_tag(iimtag[i].tag, iimtag[i].name,
+                 //       p->type(), p->data(), iptc);
+                }
                 else{
                     encode_iptc_iim_one_tag (iimtag[i].tag, iimtag[i].name,
                                             p->type(), p->data(), iptc);
+                 //   std::cerr << "ignore" << iimtag[i].name << " type:" << p->type() << "\n";
                 }
 
             }
@@ -381,7 +387,7 @@ encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc)
                     encode_iptc_iim_one_tag(iimtag[i].tag, iimtag[i].anothername,
                         p->type(), p->data(), iptc);
                 }*/
-            }
+           }
         }
     }
 }

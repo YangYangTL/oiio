@@ -36,7 +36,12 @@
 #include <iostream>
 
 #include <tiffio.h>
+extern "C" {
+#define XMD_H
+#include "jpeglib.h"
+#undef XMD_H
 
+}
 // Some EXIF tags that don't seem to be in tiff.h
 #ifndef EXIFTAG_SECURITYCLASSIFICATION
 #define EXIFTAG_SECURITYCLASSIFICATION 37394
@@ -457,6 +462,7 @@ TIFFOutput::put_parameter (const std::string &name, TypeDesc type,
             else
                 TIFFSetField (m_tif, TIFFTAG_PREDICTOR, PREDICTOR_HORIZONTAL);
         }
+
     }
     if (Strutil::iequals(name, "Copyright") && type == TypeDesc::STRING) {
         TIFFSetField (m_tif, TIFFTAG_COPYRIGHT, *(char**)data);
@@ -844,6 +850,7 @@ TIFFOutput::write_scanline (int y, int z, TypeDesc format,
     
     // Should we checkpoint? Only if we have enough scanlines and enough
     // time has passed
+
     if (m_checkpointTimer() > DEFAULT_CHECKPOINT_INTERVAL_SECONDS && 
         m_checkpointItems >= MIN_SCANLINES_OR_TILES_PER_CHECKPOINT) {
         TIFFCheckpointDirectory (m_tif);
@@ -853,7 +860,11 @@ TIFFOutput::write_scanline (int y, int z, TypeDesc format,
     else {
         ++m_checkpointItems;
     }
-    
+
+#ifdef JPEG_SUPPORT
+    TIFFCheckpointDirectory(m_tif);
+#endif
+
     return true;
 }
 
@@ -921,7 +932,10 @@ TIFFOutput::write_tile (int x, int y, int z,
     else {
         ++m_checkpointItems;
     }
-    
+
+#ifdef JPEG_SUPPORT
+    TIFFCheckpointDirectory(m_tif);
+#endif
     return true;
 }
 

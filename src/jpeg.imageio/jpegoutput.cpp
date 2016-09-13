@@ -196,7 +196,7 @@ JpgOutput::open (const std::string &name, const ImageSpec &newspec,
         m_spec.attribute ("YResolution", 72.0f*aspect);
     }
 
-    m_cinfo.write_JFIF_header = TRUE;
+    m_cinfo.write_JFIF_header = FALSE;
     /// check where use progressive compression mode
     int progressive_jpeg = 0;
     const ImageIOParameter *progressive = newspec.find_attribute("JpegProgressive", TypeDesc::INT);
@@ -295,7 +295,7 @@ JpgOutput::open (const std::string &name, const ImageSpec &newspec,
         iptc.insert (iptc.begin(), head.begin(), head.end());
         jpeg_write_marker (&m_cinfo, JPEG_APP0+13, (JOCTET*)&iptc[0], iptc.size());
     }
-
+    
     // Write XMP packet, if we have anything
     std::string xmp = encode_xmp (m_spec, true);
     if (! xmp.empty()) {
